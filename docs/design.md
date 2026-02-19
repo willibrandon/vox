@@ -1,16 +1,17 @@
-# VoxFlow — Design Document
+# Vox — Design Document
 
-**Project:** VoxFlow — Local-First Intelligent Voice Dictation Engine  
-**Version:** 1.0.0  
-**Date:** February 4, 2026  
-**Author:** Engineering Team  
-**Status:** Draft  
+**Project:** Vox — Local-First Intelligent Voice Dictation Engine
+**Version:** 2.0.0
+**Date:** February 19, 2026
+**Status:** Draft
 
 ---
 
 ## 1. Executive Summary
 
-VoxFlow is a privacy-first, locally-executed voice dictation application that transforms natural speech into polished, context-aware text in any application. It combines real-time speech recognition, intelligent post-processing via a local LLM, and universal text injection to deliver a Wispr Flow-class experience with zero cloud dependency.
+Vox is a privacy-first, locally-executed voice dictation application that transforms natural speech into polished, context-aware text in any application. It combines real-time speech recognition, intelligent post-processing via a local LLM, and universal text injection to deliver a Wispr Flow-class experience with zero cloud dependency.
+
+The UI is built with GPUI — Zed's GPU-accelerated Rust UI framework. No web tech, no JavaScript, no bundled browser engine. Pure Rust from audio capture to pixel output.
 
 ### 1.1 Core Value Proposition
 
@@ -27,60 +28,75 @@ VoxFlow is a privacy-first, locally-executed voice dictation application that tr
 | Desktop | Windows 11 | NVIDIA RTX 4090 | 24 GB GDDR6X | Primary dev, max performance |
 | Laptop | macOS 26 Tahoe | Apple M4 Pro (16-core GPU) | 24 GB unified | Mobile dev, daily driver |
 
-### 1.3 Non-Goals (v1)
+### 1.3 Non-Goals
 
-- Mobile (iOS/Android) — Tauri v2 supports it, but we defer to v2.
+- Mobile (iOS/Android) — desktop only.
 - Cloud/hybrid mode — strictly local.
 - Speaker diarization — single-user dictation only.
-- Real-time translation — English-first, multilingual transcription deferred.
+- Real-time translation — English only.
 
 ---
 
 ## 2. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Tauri v2 Shell (Rust)                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐ │
-│  │  System Tray  │  │  Hotkey Mgr  │  │    Global State (Rust)    │ │
-│  └──────┬───────┘  └──────┬───────┘  └─────────────┬─────────────┘ │
-│         │                 │                         │               │
-│  ┌──────▼─────────────────▼─────────────────────────▼─────────────┐ │
-│  │                   Audio Pipeline (Rust)                         │ │
-│  │  ┌──────────┐   ┌───────────┐   ┌────────────┐   ┌──────────┐ │ │
-│  │  │  cpal    │──▶│ Ring Buf  │──▶│ Silero VAD │──▶│ Chunker  │ │ │
-│  │  │ (capture)│   │ (16kHz)   │   │  (ONNX RT) │   │          │ │ │
-│  │  └──────────┘   └───────────┘   └────────────┘   └────┬─────┘ │ │
-│  └────────────────────────────────────────────────────────┼───────┘ │
-│                                                           │         │
-│  ┌────────────────────────────────────────────────────────▼───────┐ │
-│  │                   ASR Engine (C FFI)                            │ │
-│  │  ┌─────────────────────────────────────────────────────────┐   │ │
-│  │  │  whisper.cpp  (CUDA on Windows / Metal on macOS)        │   │ │
-│  │  │  Model: Whisper Large V3 Turbo (ggml-large-v3-turbo-q5) │   │ │
-│  │  └───────────────────────────────┬─────────────────────────┘   │ │
-│  └──────────────────────────────────┼─────────────────────────────┘ │
-│                                     │ raw transcript                │
-│  ┌──────────────────────────────────▼─────────────────────────────┐ │
-│  │                   LLM Post-Processor (C FFI)                    │ │
-│  │  ┌─────────────────────────────────────────────────────────┐   │ │
-│  │  │  llama.cpp  (CUDA on Windows / Metal on macOS)          │   │ │
-│  │  │  Model: Qwen 2.5 3B Instruct (Q4_K_M)                  │   │ │
-│  │  └───────────────────────────────┬─────────────────────────┘   │ │
-│  └──────────────────────────────────┼─────────────────────────────┘ │
-│                                     │ polished text                 │
-│  ┌──────────────────────────────────▼─────────────────────────────┐ │
-│  │                   Text Injector                                 │ │
-│  │  Windows: SendInput (Win32 API via windows-rs)                 │ │
-│  │  macOS:   CGEventCreateKeyboardEvent (Core Graphics via objc2) │ │
-│  └────────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │          Frontend (SolidJS + TypeScript + Tailwind CSS)         │ │
-│  │  Overlay HUD · Settings Panel · Transcript History · Dictionary │ │
-│  └────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                     Vox Application (Pure Rust)                        │
+│                                                                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────────┐   │
+│  │  System Tray  │  │  Global      │  │     Global AppState        │   │
+│  │  (tray-icon)  │  │  Hotkeys     │  │  (Entity via cx.set_global)│   │
+│  └──────┬───────┘  └──────┬───────┘  └──────────────┬─────────────┘   │
+│         │                 │                          │                  │
+│  ┌──────▼─────────────────▼──────────────────────────▼──────────────┐  │
+│  │                   Audio Pipeline (Rust)                           │  │
+│  │  ┌──────────┐   ┌───────────┐   ┌────────────┐   ┌──────────┐  │  │
+│  │  │  cpal    │──▶│ Ring Buf  │──▶│ Silero VAD │──▶│ Chunker  │  │  │
+│  │  │ (capture)│   │ (16kHz)   │   │  (ONNX RT) │   │          │  │  │
+│  │  └──────────┘   └───────────┘   └────────────┘   └────┬─────┘  │  │
+│  └─────────────────────────────────────────────────────────┼────────┘  │
+│                                                            │           │
+│  ┌─────────────────────────────────────────────────────────▼────────┐  │
+│  │                   ASR Engine (C FFI)                              │  │
+│  │  ┌───────────────────────────────────────────────────────────┐   │  │
+│  │  │  whisper.cpp  (CUDA on Windows / Metal on macOS)          │   │  │
+│  │  │  Model: Whisper Large V3 Turbo (ggml-large-v3-turbo-q5)  │   │  │
+│  │  └───────────────────────────────┬───────────────────────────┘   │  │
+│  └──────────────────────────────────┼───────────────────────────────┘  │
+│                                     │ raw transcript                   │
+│  ┌──────────────────────────────────▼───────────────────────────────┐  │
+│  │                   LLM Post-Processor (C FFI)                      │  │
+│  │  ┌───────────────────────────────────────────────────────────┐   │  │
+│  │  │  llama.cpp  (CUDA on Windows / Metal on macOS)            │   │  │
+│  │  │  Model: Qwen 2.5 3B Instruct (Q4_K_M)                    │   │  │
+│  │  └───────────────────────────────┬───────────────────────────┘   │  │
+│  └──────────────────────────────────┼───────────────────────────────┘  │
+│                                     │ polished text                    │
+│  ┌──────────────────────────────────▼───────────────────────────────┐  │
+│  │                   Text Injector                                    │  │
+│  │  Windows: SendInput (Win32 API via windows 0.62)                  │  │
+│  │  macOS:   CGEvent (objc2 0.6 + objc2-core-graphics 0.3)          │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                  GPUI Frontend (GPU-accelerated Rust)              │  │
+│  │  Overlay HUD · Settings Panel · Transcript History · Dictionary   │  │
+│  │  Waveform Visualizer · Model Manager · Log Viewer                 │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 2.1 Why GPUI
+
+| Property | GPUI | Tauri |
+|---|---|---|
+| Build time (incremental) | ~3–10s | ~60–300s+ (Tauri + WebView + Vite + Node) |
+| Language | Pure Rust | Rust + TypeScript + HTML/CSS |
+| Rendering | GPU-accelerated (Metal/Vulkan/DX12) | OS WebView (Chromium/WebKit) |
+| IPC overhead | Zero — direct Rust function calls | JSON serialization across process boundary |
+| Dependencies | Cargo only | Cargo + Node + pnpm + Vite + WebView2 runtime |
+| Binary size | Single static binary | Binary + bundled web assets |
+| Battle-tested | Powers Zed editor (millions of users) | Broad ecosystem but plugin compatibility issues |
 
 ---
 
@@ -90,37 +106,46 @@ VoxFlow is a privacy-first, locally-executed voice dictation application that tr
 
 | Layer | Technology | Version | Rationale |
 |---|---|---|---|
-| App Framework | Tauri v2 | 2.10.x | Rust backend, web frontend, tiny binary, system tray, global hotkeys, security-audited |
-| Language (backend) | Rust | 1.84 (2025 edition) | Zero-cost abstractions, FFI to C/C++, fearless concurrency, cross-platform |
-| Language (frontend) | TypeScript | 5.7 | Type safety for UI layer |
-| UI Framework | SolidJS | 1.9.x | Smallest bundle, finest-grained reactivity, no virtual DOM overhead |
-| CSS | Tailwind CSS | 4.x | Utility-first, works inside Tauri webview |
-| Build | Cargo + Vite | — | Tauri default toolchain |
+| UI Framework | GPUI | git (zed-industries/zed) | GPU-accelerated, pure Rust, hybrid immediate/retained mode, powers Zed |
+| Language | Rust | 1.85+ (2024 edition) | Zero-cost abstractions, FFI to C/C++, fearless concurrency |
+| Async Runtime | Tokio | 1.49 | Background ML inference, model downloads, file I/O |
+| Build | Cargo | — | Single toolchain, no Node/pnpm/Vite |
 
 ### 3.2 Audio & ML
 
 | Component | Technology | Version | Rationale |
 |---|---|---|---|
-| Audio Capture | cpal | 0.15.x | Cross-platform audio I/O in Rust, WASAPI/CoreAudio backends |
+| Audio Capture | cpal | 0.17 | Cross-platform audio I/O, WASAPI/CoreAudio. SampleRate is u32, auto RT priority |
+| Ring Buffer | ringbuf | 0.4 | Lock-free SPSC, zero allocation after init |
+| Resampler | rubato | 1.0 | High-quality async resampling, AudioAdapter trait API |
 | VAD | Silero VAD v5 | ONNX | 1.1 MB, sub-ms per frame, best open-source VAD, runs on CPU |
-| ONNX Runtime | ort (Rust crate) | 2.x | Official ONNX Runtime Rust bindings, hardware-agnostic inference |
-| ASR | whisper.cpp | 1.8.x | C/C++, CUDA + Metal, ggml quantized models, battle-tested |
-| LLM | llama.cpp | latest | C/C++, CUDA + Metal, ggml quantized models, same ecosystem |
-| ASR Model | Whisper Large V3 Turbo | ggml Q5_0 | 809M params, 6x faster than V3, ~3 GB VRAM, 99+ languages |
-| LLM Model | Qwen 2.5 3B Instruct | ggml Q4_K_M | 3B params, ~2.5 GB VRAM, excellent instruction following, fast |
-| Rust FFI (whisper) | whisper-rs | 0.13.x | Safe Rust bindings over whisper.cpp C API |
-| Rust FFI (llama) | llama-cpp-rs | 0.4.x | Safe Rust bindings over llama.cpp C API |
+| ONNX Runtime | ort | 2.0.0-rc.11 | Official ONNX Runtime Rust bindings, hardware-agnostic inference |
+| ASR | whisper.cpp | via whisper-rs | C/C++, CUDA + Metal, ggml quantized models, battle-tested |
+| ASR Bindings | whisper-rs | 0.15.1 | Safe Rust bindings. Codeberg. Flash attn disabled by default |
+| LLM | llama.cpp | via llama-cpp-2 | C/C++, CUDA + Metal, ggml quantized models |
+| LLM Bindings | llama-cpp-2 | 0.1 (utilityai) | Safe Rust bindings. NOT llama-cpp-rs 0.4 — different crate entirely |
+| ASR Model | Whisper Large V3 Turbo | ggml Q5_0 | 809M params, 6x faster than V3, ~3 GB VRAM |
+| LLM Model | Qwen 2.5 3B Instruct | gguf Q4_K_M | 3B params, ~2.2 GB VRAM, excellent instruction following |
 
 ### 3.3 Platform Integration
 
 | Component | Windows | macOS |
 |---|---|---|
-| Text Injection | `windows-rs` (SendInput) | `objc2` + Core Graphics (CGEvent) |
-| Global Hotkeys | Tauri globalShortcut plugin | Tauri globalShortcut plugin |
-| System Tray | Tauri tray plugin | Tauri tray plugin |
-| Auto-start | Tauri autostart plugin | Tauri autostart plugin |
-| GPU Acceleration | CUDA 12.6 | Metal 3 (automatic via ggml) |
+| Text Injection | `windows` 0.62 (SendInput) | `objc2` 0.6 + `objc2-core-graphics` 0.3 (CGEvent) |
+| Global Hotkeys | `global-hotkey` crate | `global-hotkey` crate |
+| System Tray | `tray-icon` crate | `tray-icon` crate |
+| GPU Acceleration | CUDA 12.8+ | Metal (automatic via ggml) |
 | Audio Backend | WASAPI (via cpal) | CoreAudio (via cpal) |
+
+### 3.4 Storage & Utilities
+
+| Component | Technology | Version | Rationale |
+|---|---|---|---|
+| Database | rusqlite | 0.38 (bundled) | Dictionary, transcript history, settings, workspace state |
+| HTTP | reqwest | 0.13 | Model downloads. rustls default, query/form features opt-in |
+| Serialization | serde + serde_json | 1.x | Settings, state persistence |
+| Logging | tracing + tracing-subscriber | 0.1 / 0.3 | Structured logging with env-filter |
+| Error handling | anyhow | 1.x | Application-level errors |
 
 ---
 
@@ -137,14 +162,19 @@ pub struct AudioConfig {
     pub sample_rate: u32,        // 16_000 Hz (whisper.cpp native)
     pub channels: u16,           // 1 (mono)
     pub sample_format: SampleFormat, // F32
-    pub buffer_size: usize,      // 512 samples = 32ms at 16kHz
     pub device: Option<String>,  // None = system default input
 }
 ```
 
+**cpal 0.17 notes:**
+- `SampleRate` is a bare `u32`, not a struct.
+- `BufferSize::Default` defers to host defaults — do not set manually.
+- `device.description()` returns `DeviceDescription` struct — use `.name()` for display.
+- cpal handles real-time thread priority automatically. Do not set it manually.
+
 #### 4.1.2 Ring Buffer Design
 
-We use a single-producer single-consumer (SPSC) lock-free ring buffer between the audio callback thread and the processing thread. The `ringbuf` crate (v0.4) provides this with zero allocation after initialization.
+Single-producer single-consumer (SPSC) lock-free ring buffer between the audio callback thread and the processing thread.
 
 ```
 Audio Callback Thread          Processing Thread
@@ -156,11 +186,15 @@ Audio Callback Thread          Processing Thread
   └───────────┘                  └───────────┘
 ```
 
-**Buffer sizing:** 64 KB ring = ~2 seconds of 16 kHz mono f32 audio. This provides headroom for processing jitter without dropping samples.
+**Buffer sizing:** 64 KB ring = ~2 seconds of 16 kHz mono f32 audio. Provides headroom for processing jitter without dropping samples.
+
+**ringbuf 0.4 note:** `occupied_len()` lives on the `Observer` trait (parent of `Consumer`). Must `use ringbuf::traits::Observer`.
 
 #### 4.1.3 Resampling
 
-If the system default input device does not natively support 16 kHz, we resample using the `rubato` crate (0.16.x), which provides high-quality async resampling with SIMD acceleration. The resampling happens in the audio callback to keep the processing thread simple.
+If the system default input device does not natively support 16 kHz, we resample using rubato 1.0. Resampling happens on the **processing thread**, not the audio callback (to avoid blocking the real-time audio thread).
+
+**rubato 1.0 note:** Use the `AudioAdapter` trait with `SequentialSliceOfVecs` adapter. The old vector-of-vectors API from 0.16 is gone.
 
 ### 4.2 Voice Activity Detection (VAD)
 
@@ -244,48 +278,52 @@ impl SileroVad {
 | **Whisper Large V3 Turbo** | **809M** | **~3 GB** | **~300x** | **~80x** | **~8%** | **99+** |
 | Whisper Medium | 769M | ~5 GB | ~100x | ~30x | 9.2% | 99+ |
 
-**Choice: Whisper Large V3 Turbo (Q5_0 quantized).** The 6x speed improvement over V3 with only ~1% WER degradation makes it the clear winner for real-time dictation. The Q5_0 quantization reduces disk and VRAM footprint further while maintaining accuracy.
-
-On the RTX 4090, this model processes audio at roughly 300x real-time — a 10-second utterance completes in ~33ms. On the M4 Pro with Metal, expect ~80x real-time — the same utterance in ~125ms.
+**Choice: Whisper Large V3 Turbo (Q5_0 quantized).** 6x speed improvement over V3 with only ~1% WER degradation. On the RTX 4090, a 10-second utterance completes in ~33ms. On M4 Pro with Metal, ~125ms.
 
 #### 4.3.2 whisper-rs Integration
 
 ```rust
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
+use std::sync::{Arc, Mutex};
 
 pub struct AsrEngine {
-    ctx: WhisperContext,
+    // WhisperContext is NOT thread-safe — must wrap in Arc<Mutex<>>
+    ctx: Arc<Mutex<WhisperContext>>,
 }
 
 impl AsrEngine {
     pub fn new(model_path: &Path, use_gpu: bool) -> Result<Self> {
         let mut params = WhisperContextParameters::default();
         params.use_gpu(use_gpu);
-        // Flash attention for faster decoding (supported in recent whisper.cpp)
-        params.flash_attn(true);
+        // Flash attention disabled by default in 0.15.1
         let ctx = WhisperContext::new_with_params(
             model_path.to_str().unwrap(),
             params,
         )?;
-        Ok(Self { ctx })
+        Ok(Self { ctx: Arc::new(Mutex::new(ctx)) })
     }
 
     pub fn transcribe(&self, audio_pcm: &[f32]) -> Result<String> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some("en")); // or None for auto-detect
+        params.set_language(Some("en"));
         params.set_no_speech_thold(0.6);
         params.set_suppress_non_speech_tokens(true);
-        params.set_single_segment(true);    // low-latency: one segment
-        params.set_no_context(true);         // no cross-segment context
-        params.set_n_threads(4);             // CPU threads (GPU does heavy lifting)
+        params.set_single_segment(true);
+        params.set_no_context(true);
+        params.set_n_threads(4);
 
-        let mut state = self.ctx.create_state()?;
+        let ctx = self.ctx.lock().unwrap();
+        // Create new WhisperState per transcription — do not reuse
+        let mut state = ctx.create_state()?;
         state.full(params, audio_pcm)?;
 
-        let n_segments = state.full_n_segments()?;
+        // full_n_segments() returns c_int, NOT Result
+        let n_segments = state.full_n_segments();
         let mut text = String::new();
         for i in 0..n_segments {
-            text.push_str(state.full_get_segment_text(i)?.as_str());
+            // Segment text via state.get_segment(i).to_str_lossy()
+            let segment_text = state.full_get_segment_text(i)?;
+            text.push_str(&segment_text);
         }
         Ok(text.trim().to_string())
     }
@@ -294,16 +332,14 @@ impl AsrEngine {
 
 #### 4.3.3 Streaming Strategy
 
-We do **not** use Whisper in a true streaming mode (which degrades accuracy significantly). Instead, we use a "chunked-batch" approach:
+We do **not** use Whisper in true streaming mode (which degrades accuracy). Instead, we use a "chunked-batch" approach:
 
 1. VAD detects speech segments (typically 1–10 seconds).
 2. Each segment is transcribed as a complete batch.
-3. Partial results are shown from the VAD state (waveform indicator).
+3. Partial results shown from VAD state (waveform indicator).
 4. Final text appears when the segment completes.
 
-This keeps Whisper in its optimal operating mode (batch) while still feeling responsive because utterances are naturally short in dictation.
-
-For longer continuous speech, we force-segment at 10 seconds and stitch results, using a 1-second overlap for context continuity.
+For longer continuous speech, force-segment at 10 seconds and stitch results with 1-second overlap for context continuity.
 
 ### 4.4 LLM Post-Processor
 
@@ -313,7 +349,7 @@ The raw transcript from Whisper is good but not polished. The LLM handles:
 2. **Punctuation and capitalization** — Whisper's punctuation is decent but inconsistent
 3. **Course correction** — "let's meet Tuesday, wait no, Wednesday" → "let's meet Wednesday"
 4. **Formatting** — numbers, dates, email addresses, code identifiers
-5. **Tone adaptation** — (v2 goal) adjust formality based on active application
+5. **Tone adaptation** — adjust formality based on active application
 6. **Command detection** — "delete that", "new line", "select all" → OS actions
 
 #### 4.4.1 Model Selection
@@ -325,9 +361,7 @@ The raw transcript from Whisper is good but not polished. The LLM handles:
 | Llama 3.2 3B | 3B | ~2.2 GB | ~140 | ~50 | Good |
 | Gemma 2 2B | 2.6B | ~1.8 GB | ~170 | ~65 | Decent |
 
-**Choice: Qwen 2.5 3B Instruct (Q4_K_M).** Best instruction-following at the 3B tier, excellent at text editing/formatting tasks, multilingual-capable for future expansion. At Q4_K_M quantization, it fits comfortably alongside Whisper Turbo with room to spare on both the 4090 (24 GB) and M4 Pro (24 GB unified).
-
-Combined VRAM budget: ~3 GB (Whisper Turbo) + ~2.2 GB (Qwen 2.5 3B) = **~5.2 GB**. Leaves 18+ GB free on both machines.
+**Choice: Qwen 2.5 3B Instruct (Q4_K_M).** Best instruction-following at the 3B tier. Combined VRAM: ~3 GB (Whisper) + ~2.2 GB (Qwen) = **~5.2 GB**. Leaves 18+ GB free on both machines.
 
 #### 4.4.2 System Prompt
 
@@ -354,39 +388,53 @@ Rules:
 7. Output ONLY the cleaned text or a JSON command. No explanations.
 ```
 
-#### 4.4.3 Inference Strategy
-
-The LLM processes each utterance (typically 5–50 tokens of raw transcript) and produces cleaned output. At 150 tok/s on the 4090, a 30-token utterance completes in ~200ms. On M4 Pro at ~55 tok/s, the same takes ~550ms.
-
-To keep latency down, we:
-
-- Use a small context window (2048 tokens max).
-- Keep the system prompt in the KV cache across calls (persistent session).
-- Stream tokens to the text injector as they're generated.
-- Use speculative decoding where supported (llama.cpp draft model).
+#### 4.4.3 llama-cpp-2 Integration
 
 ```rust
+use llama_cpp_2::model::LlamaModel;
+use llama_cpp_2::model::params::LlamaModelParams;
+use llama_cpp_2::context::LlamaContext;
+use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::LlamaBackend;
+use llama_cpp_2::token::AddBos;
+use std::sync::Arc;
+
 pub struct PostProcessor {
-    model: LlamaModel,
-    session: LlamaSession, // persistent KV cache
+    // LlamaModel is Send+Sync — can be shared via Arc
+    model: Arc<LlamaModel>,
+    backend: LlamaBackend,
 }
 
 impl PostProcessor {
-    pub fn process(&mut self, raw_text: &str) -> Result<ProcessorOutput> {
-        let prompt = format!(
-            "Raw transcript: \"{}\"\nCleaned output:",
-            raw_text
-        );
-        let mut output = String::new();
-        for token in self.session.generate(&prompt, GenerateParams {
-            max_tokens: 256,
-            temperature: 0.1, // near-deterministic for editing tasks
-            stop: &["\n", "Raw transcript:"],
-        })? {
-            output.push_str(&token);
+    pub fn new(model_path: &Path, use_gpu: bool) -> Result<Self> {
+        let backend = LlamaBackend::init()?;
+        let mut model_params = LlamaModelParams::default();
+        if use_gpu {
+            model_params.set_n_gpu_layers(-1); // all layers on GPU
         }
+        // load_from_file needs &LlamaBackend as first arg
+        let model = LlamaModel::load_from_file(&backend, model_path, &model_params)?;
+        Ok(Self {
+            model: Arc::new(model),
+            backend,
+        })
+    }
 
-        // Parse command or return text
+    pub fn process(&self, raw_text: &str, dictionary_hints: &str) -> Result<ProcessorOutput> {
+        // LlamaContext is NOT Send/Sync — create one per call
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(std::num::NonZero::new(2048));
+        let mut ctx = self.model.new_context(&self.backend, ctx_params)?;
+
+        let prompt = format!(
+            "{system_prompt}\n{dictionary_hints}\nRaw transcript: \"{raw_text}\"\nCleaned output:",
+        );
+
+        // str_to_token takes AddBos enum
+        let tokens = self.model.str_to_token(&prompt, AddBos::Always)?;
+        // ... run inference, collect output tokens ...
+
+        let output = String::new(); // collected from token generation
         if output.trim_start().starts_with('{') {
             Ok(ProcessorOutput::Command(serde_json::from_str(&output)?))
         } else {
@@ -400,16 +448,25 @@ pub enum ProcessorOutput {
     Command(VoiceCommand),
 }
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct VoiceCommand {
     pub cmd: String,
     pub args: Option<serde_json::Value>,
 }
 ```
 
+#### 4.4.4 Inference Strategy
+
+To keep latency down:
+
+- Small context window (2048 tokens max).
+- Persistent KV cache session across calls to keep system prompt cached.
+- Stream tokens to the text injector as they're generated.
+- Temperature 0.1 for near-deterministic output.
+
 ### 4.5 Text Injection
 
-The text injector types the polished text into whatever application has focus, character by character, simulating keyboard input at the OS level.
+The text injector types polished text into whatever application has focus, simulating keyboard input at the OS level.
 
 #### 4.5.1 Windows Implementation
 
@@ -423,7 +480,6 @@ mod injector {
         let mut inputs: Vec<INPUT> = Vec::with_capacity(chars.len() * 2);
 
         for ch in &chars {
-            // Key down
             inputs.push(INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
@@ -436,7 +492,6 @@ mod injector {
                     },
                 },
             });
-            // Key up
             inputs.push(INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
@@ -459,26 +514,37 @@ mod injector {
 }
 ```
 
+**Windows note:** SendInput (via `windows` 0.62) cannot inject into elevated processes due to UIPI.
+
 #### 4.5.2 macOS Implementation
+
+Uses `objc2` 0.6 + `objc2-core-graphics` 0.3 (NOT the Servo `core-graphics` crate which is heading toward deprecation).
 
 ```rust
 #[cfg(target_os = "macos")]
 mod injector {
-    use core_graphics::event::{CGEvent, CGEventTapLocation};
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    // objc2-core-graphics 0.3
+    use objc2_core_graphics::*;
 
     pub fn inject_text(text: &str) -> Result<()> {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)?;
-
-        for ch in text.chars() {
-            let event = CGEvent::new_keyboard_event(source.clone(), 0, true)?;
-            let buf = [ch as u16];
-            event.set_string_from_utf16_unchecked(&buf);
-            event.post(CGEventTapLocation::HID);
-
-            let event_up = CGEvent::new_keyboard_event(source.clone(), 0, false)?;
-            event_up.post(CGEventTapLocation::HID);
+        // CGEvent has an undocumented 20-character limit per call.
+        // Must chunk text into 20-char segments.
+        for chunk in text.as_bytes().chunks(20) {
+            let chunk_str = std::str::from_utf8(chunk)?;
+            inject_chunk(chunk_str)?;
         }
+        Ok(())
+    }
+
+    fn inject_chunk(text: &str) -> Result<()> {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)?;
+        let event = CGEvent::new_keyboard_event(source.clone(), 0, true)?;
+        let buf: Vec<u16> = text.encode_utf16().collect();
+        event.set_string_from_utf16_unchecked(&buf);
+        event.post(CGEventTapLocation::HID);
+
+        let event_up = CGEvent::new_keyboard_event(source, 0, false)?;
+        event_up.post(CGEventTapLocation::HID);
         Ok(())
     }
 }
@@ -499,134 +565,329 @@ Voice commands map to keyboard shortcuts injected at the OS level:
 | `paste` | Ctrl+V | Cmd+V |
 | `tab` | Tab | Tab |
 
-### 4.6 Frontend (Overlay HUD)
+### 4.6 GPUI Frontend
 
-The frontend is a minimal, always-on-top overlay that shows recording state and transcript feedback. It is intentionally small — most interaction happens via the hotkey and the user's active application.
+The frontend is a GPU-accelerated native Rust UI built with GPUI. It consists of two windows: a compact overlay HUD for recording state, and a full settings/management window accessible from the system tray.
 
-#### 4.6.1 UI States
+#### 4.6.1 Application Startup State Machine
+
+The app must be functional from the moment it launches, regardless of whether models are downloaded, GPU is available, or any component fails to initialize. **No launch state is an error state — every state has a working UI.**
 
 ```
+┌─────────────┐     models missing?     ┌──────────────────┐
+│   LAUNCH    │────────────────────────▶│  DOWNLOADING     │
+│  (instant)  │                         │  (auto, no prompt)│
+└──────┬──────┘                         └────────┬─────────┘
+       │ models present                          │ all complete
+       ▼                                         ▼
+┌──────────────┐                       ┌──────────────────┐
+│ LOADING      │◀──────────────────────│  ALL MODELS      │
+│ (load models)│                       │  DOWNLOADED       │
+└──────┬───────┘                       └──────────────────┘
+       │ all loaded
+       ▼
+┌──────────────┐
+│    READY     │
+│ (full pipeline: VAD + ASR + LLM)
+└──────────────┘
+```
+
+**Critical rules:**
+1. The overlay HUD opens **immediately** on launch — before models load, before GPU init, before anything.
+2. If models are missing, download starts **automatically** with progress in the overlay. No confirmation dialog. No "click to download" button. It just starts.
+3. If download fails (no internet), the overlay shows the model directory path and URLs so the user can manually place files. The app stays open and polls for model files every 5 seconds.
+4. **All three models (VAD, Whisper, LLM) must be present and loaded before the pipeline activates.**
+5. **The hotkey works in every state.** If models are still downloading and the user presses the hotkey, show "Models downloading... 43%" in the overlay instead of silently doing nothing.
+
+```rust
+/// The app is always in exactly one of these states.
+/// Every state has a corresponding UI. None of them are "broken."
+#[derive(Clone, Debug)]
+pub enum AppReadiness {
+    /// Models not found, downloading automatically
+    Downloading {
+        vad_progress: DownloadProgress,
+        whisper_progress: DownloadProgress,
+        llm_progress: DownloadProgress,
+    },
+    /// All models downloaded, loading into GPU memory
+    Loading { stage: &'static str },
+    /// Full pipeline operational (VAD + GPU ASR + GPU LLM)
+    Ready,
+}
+
+#[derive(Clone, Debug)]
+pub enum DownloadProgress {
+    Pending,
+    InProgress { bytes_downloaded: u64, bytes_total: u64 },
+    Complete,
+    Failed { error: String, manual_url: String },
+}
+```
+
+#### 4.6.1a Application Entry Point
+
+```rust
+use gpui::*;
+
+fn main() {
+    // Initialize logging
+    let _guard = init_logging();
+
+    Application::new().run(|cx: &mut App| {
+        // 1. Create state (SQLite, settings, dictionary — lightweight, no ML)
+        let state = VoxState::new().expect("Failed to create app data directory");
+        cx.set_global(state);
+        cx.set_global(VoxTheme::dark());
+
+        // 2. Register actions & key bindings
+        register_actions(cx);
+        register_key_bindings(cx);
+
+        // 3. Open overlay HUD IMMEDIATELY (before model loading)
+        open_overlay_window(cx);
+
+        // 4. Set up system tray
+        setup_system_tray(cx);
+
+        // 5. Set up global hotkey
+        setup_global_hotkey(cx);
+
+        // 6. Kick off async model check + download + pipeline init
+        //    This runs in the background. The UI is already visible.
+        cx.spawn(|cx| async move {
+            initialize_pipeline(cx).await;
+        }).detach();
+
+        cx.activate(true);
+    });
+}
+
+async fn initialize_pipeline(cx: AsyncApp) {
+    // Check which models exist on disk
+    let missing = check_models(&cx);
+
+    if !missing.is_empty() {
+        // Update UI: AppReadiness::Downloading
+        // Start downloads automatically — no user action needed
+        download_missing_models(missing, &cx).await;
+        // All three models must complete before proceeding
+    }
+
+    // Update UI: AppReadiness::Loading
+    // Load all models into GPU memory: VAD, Whisper, LLM
+    load_pipeline(&cx).await.expect("Pipeline initialization failed");
+    // Update UI: AppReadiness::Ready
+    // Pipeline is live, hotkey now triggers dictation
+}
+```
+
+#### 4.6.2 Overlay HUD Window
+
+```rust
+fn open_overlay_window(cx: &mut App) {
+    let window_options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(
+            Bounds::centered(None, size(px(360.0), px(80.0)), cx),
+        )),
+        window_decorations: Some(WindowDecorations::Client), // no title bar
+        window_min_size: Some(Size { width: px(200.0), height: px(60.0) }),
+        focus: false,            // don't steal focus from user's active app
+        show: true,
+        is_movable: true,
+        // always on top handled per-platform
+        ..Default::default()
+    };
+
+    cx.open_window(window_options, |window, cx| {
+        cx.new(|cx| OverlayHud::new(window, cx))
+    }).expect("Failed to open overlay window");
+}
+```
+
+#### 4.6.3 UI States
+
+Every possible app state has a visible, informative overlay. No state is invisible or silent.
+
+```
+STARTUP STATES (first launch or models missing):
+
 ┌─────────────────────────────────────────┐
-│  IDLE           VoxFlow  ▾  [≡]         │
+│  ↓ DOWNLOADING  Vox  ▾  [≡]            │
+│  Whisper model: 43% (780 MB / 1.8 GB)  │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│  ↓ DOWNLOADING  Vox  ▾  [≡]            │
+│  LLM model: 12% (192 MB / 1.6 GB)     │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│  ⟳ LOADING      Vox  ▾  [≡]            │
+│  Loading Whisper model onto GPU...      │
+└─────────────────────────────────────────┘
+
+DOWNLOAD FAILURE (no internet, bad URL, etc.):
+
+┌─────────────────────────────────────────┐
+│  ⚠ NEEDS MODELS  Vox  ▾  [≡]           │
+│  Place models in: %LOCALAPPDATA%/...    │
+│  [Open Folder]  [Retry Download]        │
+└─────────────────────────────────────────┘
+
+NORMAL OPERATION:
+
+┌─────────────────────────────────────────┐
+│  IDLE           Vox  ▾  [≡]            │
 │  Press [Fn] to start dictating          │
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│  ● LISTENING    VoxFlow  ▾  [≡]         │
+│  ● LISTENING    Vox  ▾  [≡]            │
 │  ████████░░░░░░░░  (waveform animation) │
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│  ⟳ PROCESSING   VoxFlow  ▾  [≡]         │
+│  ⟳ PROCESSING   Vox  ▾  [≡]            │
 │  "let's meet wednesday at three pm"     │
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│  ✓ INJECTED     VoxFlow  ▾  [≡]         │
+│  ✓ INJECTED     Vox  ▾  [≡]            │
 │  Let's meet Wednesday at 3 PM.          │
+└─────────────────────────────────────────┘
+
+HOTKEY PRESSED WHILE NOT READY:
+
+┌─────────────────────────────────────────┐
+│  ↓ NOT READY    Vox  ▾  [≡]            │
+│  Models downloading... 43%              │
 └─────────────────────────────────────────┘
 ```
 
-#### 4.6.2 Component Architecture
+#### 4.6.4 Component Architecture
 
-```
-src/
-├── App.tsx                  # Root component, state machine
-├── components/
-│   ├── OverlayHud.tsx       # Floating pill overlay
-│   ├── WaveformVisualizer.tsx  # Real-time audio waveform
-│   ├── TranscriptDisplay.tsx   # Raw → polished text transition
-│   ├── SettingsPanel.tsx       # Full settings UI
-│   ├── DictionaryEditor.tsx    # Custom words/phrases
-│   └── HistoryView.tsx         # Past transcriptions
-├── hooks/
-│   ├── useAudioState.ts     # Tauri event subscription for audio state
-│   ├── useTranscript.ts     # Transcript streaming from backend
-│   └── useSettings.ts       # Persistent settings via Tauri store
-├── lib/
-│   ├── tauri.ts             # Typed Tauri invoke/event wrappers
-│   └── commands.ts          # Command definitions
-└── styles/
-    └── app.css              # Tailwind base + custom animations
-```
+Following the Tusk/Zed pattern — workspace crate for UI, core crate for backend:
 
-#### 4.6.3 Tauri IPC Contract
+```rust
+// Overlay HUD — compact floating pill
+pub struct OverlayHud {
+    pipeline_state: PipelineState,
+    waveform_data: Vec<f32>,
+    raw_transcript: Option<String>,
+    polished_transcript: Option<String>,
+    focus_handle: FocusHandle,
+}
 
-Frontend ↔ Backend communication via Tauri commands and events:
+impl Render for OverlayHud {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<VoxTheme>();
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .h_full()
+            .bg(theme.colors.overlay_bg)
+            .rounded(radius::LG)
+            .child(self.render_status_bar(cx))
+            .child(self.render_content(cx))
+    }
+}
 
-**Commands (frontend → backend):**
+// Settings window — full management UI
+pub struct SettingsWindow {
+    workspace: Entity<VoxWorkspace>,
+}
 
-```typescript
-// Start/stop recording
-invoke('toggle_recording'): Promise<void>
-
-// Get current state
-invoke('get_state'): Promise<AppState>
-
-// Update settings
-invoke('update_settings', { settings: Settings }): Promise<void>
-
-// Get transcript history
-invoke('get_history', { limit: number }): Promise<TranscriptEntry[]>
-
-// Add word to custom dictionary
-invoke('add_dictionary_word', { word: string, replacement?: string }): Promise<void>
-
-// List available audio input devices
-invoke('list_audio_devices'): Promise<AudioDevice[]>
-
-// Select audio input device
-invoke('set_audio_device', { deviceId: string }): Promise<void>
+pub struct VoxWorkspace {
+    active_panel: Panel,
+    settings_panel: Entity<SettingsPanel>,
+    history_panel: Entity<HistoryPanel>,
+    dictionary_panel: Entity<DictionaryPanel>,
+    model_panel: Entity<ModelPanel>,
+    log_panel: Entity<LogPanel>,
+}
 ```
 
-**Events (backend → frontend):**
+#### 4.6.5 Settings Window Panels
 
-```typescript
-// Audio state changes
-listen('audio-state', (e: { state: 'idle' | 'listening' | 'processing' | 'injecting' }) => void)
+| Panel | Purpose |
+|---|---|
+| `SettingsPanel` | Audio device, VAD tuning, hotkey config, appearance |
+| `HistoryPanel` | Past transcriptions with search |
+| `DictionaryPanel` | Custom words/phrases CRUD |
+| `ModelPanel` | Model download, swap, benchmark |
+| `LogPanel` | Live tracing output for debugging |
 
-// Real-time audio level (for waveform)
-listen('audio-level', (e: { rms: number, peak: number }) => void)
+#### 4.6.6 Waveform Visualizer
 
-// Raw transcript available
-listen('transcript-raw', (e: { text: string, segment_id: string }) => void)
+Custom GPUI element using the low-level `Element` trait for efficient real-time rendering of audio levels.
 
-// Polished transcript available
-listen('transcript-polished', (e: { text: string, segment_id: string }) => void)
+```rust
+pub struct WaveformVisualizer {
+    samples: Vec<f32>,  // recent RMS values
+    width: Pixels,
+    height: Pixels,
+}
 
-// Error
-listen('error', (e: { message: string, code: string }) => void)
+impl IntoElement for WaveformVisualizer {
+    // Custom paint using GPUI's Path API for smooth waveform curves
+}
 ```
 
 ---
 
 ## 5. Data Flow
 
+### 5.0 First Launch (No Models On Disk)
+
+```
+Time       Event
+─────────  ──────────────────────────────────────────────────
+   0ms     App launches. Overlay HUD appears immediately.
+   5ms     Check model directory → empty. Overlay: "Downloading..."
+  10ms     Start downloading all three models concurrently:
+           - Silero VAD v5 (1.1 MB)
+           - Whisper Large V3 Turbo Q5_0 (1.8 GB)
+           - Qwen 2.5 3B Instruct Q4_K_M (1.6 GB)
+   1s      VAD downloaded.
+   1s+     Overlay: "Downloading models: 12% (0.4 / 3.4 GB)"
+   ...     Progress updates every 500ms in overlay
+ ~5 min    All three models downloaded.
+           Overlay: "Loading models onto GPU..."
+ ~10s      All models loaded. Pipeline fully active.
+           Overlay: "IDLE — Press [Fn] to start dictating"
+           User never had to restart, click anything, or configure anything.
+```
+
+If user presses hotkey at any point during download:
+- Overlay shows: "Models downloading... 43%"
+- No silent failure. No crash. No hanging.
+
 ### 5.1 Happy Path (End-to-End)
 
 ```
 Time(ms)  Event
 ────────  ──────────────────────────────────────────────────
-   0      User presses hotkey (Fn / CapsLock / custom)
-   1      Tauri global shortcut fires → toggle_recording()
-   2      Audio capture begins via cpal
+   0      User presses hotkey (global-hotkey crate fires)
+   1      Pipeline toggle → audio capture begins via cpal
    5      First 512-sample window → Silero VAD
   32      VAD: speech_prob = 0.02 (silence, waiting...)
  200      User starts speaking
  232      VAD: speech_prob = 0.91 → state = SPEAKING
- 232      UI event: audio-state = "listening"
+ 232      Overlay: state = Listening, waveform animating
  232+     Audio accumulating in speech buffer
 2500      User pauses (natural utterance boundary)
 3000      VAD: 500ms silence → state = SILENT → emit segment
-3000      UI event: audio-state = "processing"
+3000      Overlay: state = Processing
 3001      Speech buffer (2.3s of audio) → whisper.cpp
 3035      Whisper returns: "um let's meet tuesday wait no wednesday at three pm"
 3035      Raw transcript → LLM post-processor
-3036      UI event: transcript-raw (for display)
+3036      Overlay: shows raw transcript
 3250      LLM returns: "Let's meet Wednesday at 3 PM."
-3250      UI event: transcript-polished
+3250      Overlay: shows polished transcript
 3251      Text injector → types into active application
-3280      UI event: audio-state = "listening" (still recording)
+3280      Overlay: state = Listening (still recording)
 3280      User continues speaking...
 ```
 
@@ -648,7 +909,7 @@ Both well under the 500ms target.
 
 ### 5.2 Hands-Free Mode
 
-For extended dictation sessions, the user activates hands-free mode (double-press hotkey). In this mode, recording continues indefinitely, the VAD auto-segments, and each segment flows through the pipeline automatically. The user can exit by pressing the hotkey once.
+Double-press hotkey activates hands-free mode. Recording continues indefinitely, VAD auto-segments, each segment flows through the pipeline automatically. Single press to exit.
 
 ### 5.3 Command Mode
 
@@ -656,83 +917,99 @@ When the user says "hey vox" (wake word) followed by a command, the pipeline rou
 
 Example: "hey vox, delete the last sentence" → `{"cmd": "delete_last_sentence"}`
 
-Wake word detection is handled by a simple keyword spotter on the raw transcript, not a separate model. This avoids always-on audio processing when not dictating.
+Wake word detection is a simple keyword spotter on the raw transcript, not a separate model.
 
 ---
 
 ## 6. Project Structure
 
 ```
-voxflow/
+vox/
 ├── Cargo.toml                    # Workspace root
 ├── Cargo.lock
 ├── LICENSE                        # MIT
 ├── README.md
+├── CLAUDE.md
 │
-├── src-tauri/                    # Tauri Rust backend
-│   ├── Cargo.toml
-│   ├── tauri.conf.json            # Tauri config (window, permissions, etc.)
-│   ├── capabilities/
-│   │   └── default.json           # Tauri v2 capability permissions
-│   ├── icons/                     # App icons
-│   ├── build.rs                   # Build script (link whisper.cpp, llama.cpp)
-│   └── src/
-│       ├── main.rs                # Tauri entry point
-│       ├── lib.rs                 # Module declarations
-│       ├── state.rs               # Global AppState (Arc<Mutex<...>>)
-│       ├── commands.rs            # Tauri command handlers
-│       ├── audio/
-│       │   ├── mod.rs
-│       │   ├── capture.rs         # cpal audio capture
-│       │   ├── ring_buffer.rs     # SPSC ring buffer wrapper
-│       │   └── resampler.rs       # rubato resampler
-│       ├── vad/
-│       │   ├── mod.rs
-│       │   ├── silero.rs          # Silero VAD ONNX wrapper
-│       │   └── chunker.rs         # Speech segment accumulator
-│       ├── asr/
-│       │   ├── mod.rs
-│       │   └── whisper.rs         # whisper-rs wrapper
-│       ├── llm/
-│       │   ├── mod.rs
-│       │   ├── processor.rs       # LLM post-processor
-│       │   └── prompts.rs         # System prompts and templates
-│       ├── injector/
-│       │   ├── mod.rs
-│       │   ├── windows.rs         # Win32 SendInput
-│       │   ├── macos.rs           # CGEvent text injection
-│       │   └── commands.rs        # Voice command → keystrokes
-│       ├── dictionary/
-│       │   ├── mod.rs
-│       │   └── store.rs           # Custom word dictionary (SQLite)
-│       ├── config/
-│       │   ├── mod.rs
-│       │   └── settings.rs        # User settings (serde + Tauri store)
-│       └── pipeline/
-│           ├── mod.rs
-│           └── orchestrator.rs    # End-to-end pipeline coordinator
+├── crates/
+│   ├── vox/                      # Main binary
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs           # Application::new().run(), window setup
+│   │       ├── app.rs            # VoxApp root component
+│   │       └── tray.rs           # System tray setup (tray-icon)
+│   │
+│   ├── vox_core/                 # Backend: pipeline, ML, state
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── state.rs          # VoxState (global, Arc<RwLock<...>>)
+│   │       ├── pipeline/
+│   │       │   ├── mod.rs
+│   │       │   └── orchestrator.rs
+│   │       ├── audio/
+│   │       │   ├── mod.rs
+│   │       │   ├── capture.rs    # cpal 0.17 audio capture
+│   │       │   ├── ring_buffer.rs # ringbuf 0.4 SPSC wrapper
+│   │       │   └── resampler.rs  # rubato 1.0 resampler
+│   │       ├── vad/
+│   │       │   ├── mod.rs
+│   │       │   ├── silero.rs     # Silero VAD via ort 2.0
+│   │       │   └── chunker.rs    # Speech segment accumulator
+│   │       ├── asr/
+│   │       │   ├── mod.rs
+│   │       │   └── whisper.rs    # whisper-rs 0.15.1 wrapper
+│   │       ├── llm/
+│   │       │   ├── mod.rs
+│   │       │   ├── processor.rs  # llama-cpp-2 0.1 post-processor
+│   │       │   └── prompts.rs    # System prompts and templates
+│   │       ├── injector/
+│   │       │   ├── mod.rs
+│   │       │   ├── windows.rs    # Win32 SendInput (windows 0.62)
+│   │       │   ├── macos.rs      # CGEvent (objc2 0.6)
+│   │       │   └── commands.rs   # Voice command → keystrokes
+│   │       ├── dictionary/
+│   │       │   ├── mod.rs
+│   │       │   └── store.rs      # SQLite dictionary (rusqlite 0.38)
+│   │       ├── config/
+│   │       │   ├── mod.rs
+│   │       │   └── settings.rs   # User settings (serde + JSON file)
+│   │       ├── hotkey.rs         # global-hotkey crate wrapper
+│   │       └── models.rs         # Model download manager (reqwest 0.13)
+│   │
+│   └── vox_ui/                   # GPUI UI components
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs
+│           ├── theme.rs          # VoxTheme + color palette
+│           ├── layout.rs         # Spacing, sizing, radius constants
+│           ├── overlay_hud.rs    # Floating pill overlay
+│           ├── waveform.rs       # Real-time audio waveform element
+│           ├── workspace.rs      # Settings window layout
+│           ├── settings_panel.rs # Audio, VAD, hotkey, appearance settings
+│           ├── history_panel.rs  # Past transcriptions
+│           ├── dictionary_panel.rs # Custom words/phrases
+│           ├── model_panel.rs    # Model download & management
+│           ├── log_panel.rs      # Live log viewer
+│           ├── text_input.rs     # Custom text input component
+│           ├── button.rs         # Styled button component
+│           ├── key_bindings.rs   # Actions and keyboard shortcuts
+│           └── icons.rs          # SVG icon system
 │
-├── src/                           # Frontend (SolidJS + TypeScript)
-│   ├── index.html
-│   ├── main.tsx
-│   ├── App.tsx
-│   ├── components/
-│   ├── hooks/
-│   ├── lib/
-│   └── styles/
+├── assets/                       # Icons, SVGs, fonts
+│   └── icons/
 │
-├── models/                        # Git-ignored, downloaded at first run
+├── models/                       # Git-ignored, downloaded at first run
 │   ├── ggml-large-v3-turbo-q5_0.bin
 │   ├── qwen2.5-3b-instruct-q4_k_m.gguf
 │   └── silero_vad_v5.onnx
 │
 ├── scripts/
-│   ├── download-models.sh         # Model download script
-│   ├── download-models.ps1        # Windows variant
-│   └── benchmark.sh               # Latency benchmark harness
+│   ├── download-models.sh
+│   └── download-models.ps1
 │
 └── tests/
-    ├── audio_fixtures/            # Test WAV files
+    ├── audio_fixtures/           # Test WAV files
     ├── test_vad.rs
     ├── test_asr.rs
     ├── test_llm.rs
@@ -747,93 +1024,144 @@ voxflow/
 ### 7.1 Prerequisites
 
 **Both platforms:**
-- Rust 1.84+ (rustup)
-- Node.js 22 LTS + pnpm 9.x
-- CMake 3.28+
+- Rust 1.85+ (2024 edition) via rustup
+- CMake 4.0+
 
 **Windows additional:**
 - Visual Studio 2022 Build Tools (MSVC)
-- CUDA Toolkit 12.6
+- CUDA Toolkit 12.8+
 - cuDNN 9.x
+- `CMAKE_GENERATOR=Visual Studio 17 2022` (CUDA doesn't support VS 18 Insiders)
+- `CUDA_PATH` set as persistent user env var
 
 **macOS additional:**
-- Xcode 16.x + Command Line Tools
+- Xcode 26.x + Command Line Tools
 - No additional GPU setup needed (Metal is automatic)
 
-### 7.2 build.rs
+**No Node.js, pnpm, Vite, or any web toolchain required.**
 
-The `build.rs` calls `tauri_build::build()`. GPU backends are handled by `whisper-rs` and `llama-cpp-rs` via Cargo feature flags — no manual linking required. On Windows with CUDA, ensure `CUDA_PATH` is set.
-
-### 7.3 Cargo.toml Feature Flags
+### 7.2 Cargo.toml (Workspace Root)
 
 ```toml
 [workspace]
-members = ["src-tauri"]
+members = ["crates/vox", "crates/vox_core", "crates/vox_ui"]
+resolver = "2"
 
-# src-tauri/Cargo.toml
-[package]
-name = "voxflow"
+[workspace.package]
 version = "1.0.0"
 edition = "2024"
+license = "MIT"
 
-[features]
-default = []
-cuda = ["whisper-rs/cuda", "llama-cpp-rs/cuda"]
-metal = ["whisper-rs/metal", "llama-cpp-rs/metal"]
-
-[dependencies]
-tauri = { version = "2.10", features = ["tray-icon"] }
-tauri-plugin-global-shortcut = "2"
-tauri-plugin-autostart = "2"
-tauri-plugin-store = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-shell = "2"
+[workspace.dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "TBD" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros"] }
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = "symbols"
+codegen-units = 1
+```
+
+### 7.3 vox_core/Cargo.toml
+
+```toml
+[package]
+name = "vox_core"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda", "llama-cpp-2/cuda"]
+metal = ["whisper-rs/metal", "llama-cpp-2/metal"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
 
 # Audio
-cpal = "0.15"
+cpal = "0.17"
 ringbuf = "0.4"
-rubato = "0.16"
+rubato = "1.0"
 
 # ML
-ort = { version = "2", features = ["load-dynamic"] }
-whisper-rs = "0.13"
-llama-cpp-rs = "0.4"
+ort = { version = "2.0.0-rc.11", features = ["load-dynamic"] }
+whisper-rs = "0.15.1"
+llama-cpp-2 = "0.1"
 
 # Platform
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.5"
-core-graphics = "0.24"
+objc2 = "0.6"
+objc2-core-graphics = "0.3"
 
-# Storage
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Storage & networking
+rusqlite = { version = "0.38", features = ["bundled"] }
+reqwest = { version = "0.13", features = ["stream"] }
+
+# Hotkey & tray
+global-hotkey = "0.6"
+tray-icon = "0.19"
 ```
 
-### 7.4 Build Commands
+### 7.4 vox_ui/Cargo.toml
+
+```toml
+[package]
+name = "vox_ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+vox_core = { path = "../vox_core" }
+serde.workspace = true
+parking_lot.workspace = true
+smallvec = { version = "1.11", features = ["union"] }
+```
+
+### 7.5 Build Commands
 
 ```bash
-# Windows (CUDA)
-cargo tauri build --features cuda
+# Development (Windows, CUDA)
+cargo run -p vox --features vox_core/cuda
 
-# macOS (Metal)
-cargo tauri build --features metal
+# Development (macOS, Metal)
+cargo run -p vox --features vox_core/metal
 
-# Development
-cargo tauri dev --features cuda    # or metal
+# Release build
+cargo build --release -p vox --features vox_core/cuda
+
+# Run tests
+cargo test -p vox_core --features cuda
+
+# Run a single test
+cargo test -p vox_core test_name --features cuda -- --nocapture
+
+# Latency benchmarks
+cargo test -p vox_core --release --features cuda benchmark_ -- --nocapture
 ```
+
+Incremental builds after initial compilation: **~3–10 seconds** (vs 60–300s+ with Tauri).
 
 ---
 
@@ -842,8 +1170,6 @@ cargo tauri dev --features cuda    # or metal
 The orchestrator is the central coordinator that wires all components together and manages the async pipeline.
 
 ```rust
-// src-tauri/src/pipeline/orchestrator.rs
-
 use tokio::sync::{mpsc, broadcast};
 use std::sync::Arc;
 
@@ -853,6 +1179,7 @@ pub struct Pipeline {
     asr: AsrEngine,
     llm: PostProcessor,
     injector: TextInjector,
+    dictionary: DictionaryCache,
     state_tx: broadcast::Sender<PipelineState>,
 }
 
@@ -866,23 +1193,35 @@ pub enum PipelineState {
 }
 
 impl Pipeline {
+    /// All components are required. Pipeline does not start without all of them.
+    pub fn new(
+        audio: AudioCapture,
+        vad: SileroVad,
+        asr: AsrEngine,
+        llm: PostProcessor,
+        injector: TextInjector,
+        dictionary: DictionaryCache,
+        state_tx: broadcast::Sender<PipelineState>,
+    ) -> Self {
+        Self { audio_capture: audio, vad, asr, llm, injector, dictionary, state_tx }
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         let (segment_tx, mut segment_rx) = mpsc::channel::<Vec<f32>>(8);
 
-        // Spawn audio capture + VAD on a dedicated thread (real-time priority)
         let audio_handle = self.spawn_audio_thread(segment_tx);
 
-        // Process segments as they arrive
         while let Some(audio_segment) = segment_rx.recv().await {
             self.state_tx.send(PipelineState::Processing { raw_text: None })?;
 
-            // ASR (CPU-bound, run on blocking thread pool)
+            // ASR (GPU-bound)
             let raw_text = tokio::task::spawn_blocking({
                 let asr = self.asr.clone();
                 move || asr.transcribe(&audio_segment)
             }).await??;
 
             if raw_text.is_empty() {
+                self.state_tx.send(PipelineState::Listening)?;
                 continue;
             }
 
@@ -890,10 +1229,15 @@ impl Pipeline {
                 raw_text: Some(raw_text.clone()),
             })?;
 
-            // LLM post-processing
+            // Dictionary substitution (fast, O(1) lookups)
+            let substituted = self.dictionary.apply_substitutions(&raw_text);
+
+            // LLM post-processing (GPU-bound)
+            let hints = self.dictionary.top_hints(50);
             let result = tokio::task::spawn_blocking({
-                let mut llm = self.llm.clone();
-                move || llm.process(&raw_text)
+                let llm = self.llm.clone();
+                let text = substituted.clone();
+                move || llm.process(&text, &hints)
             }).await??;
 
             match result {
@@ -913,61 +1257,6 @@ impl Pipeline {
 
         Ok(())
     }
-
-    fn spawn_audio_thread(
-        &self,
-        segment_tx: mpsc::Sender<Vec<f32>>,
-    ) -> std::thread::JoinHandle<()> {
-        let mut vad = self.vad.clone();
-        let audio_config = self.audio_capture.config().clone();
-
-        std::thread::Builder::new()
-            .name("voxflow-audio".into())
-            .spawn(move || {
-                // Set thread to real-time priority
-                #[cfg(target_os = "windows")]
-                unsafe {
-                    windows::Win32::System::Threading::SetThreadPriority(
-                        windows::Win32::System::Threading::GetCurrentThread(),
-                        windows::Win32::System::Threading::THREAD_PRIORITY_TIME_CRITICAL,
-                    );
-                }
-
-                let mut speech_buffer: Vec<f32> = Vec::with_capacity(16000 * 30);
-                let mut is_speaking = false;
-                let mut silence_samples = 0u32;
-
-                // Audio callback fills ring buffer; this thread drains it
-                loop {
-                    let chunk = audio_config.read_chunk(512);
-                    let prob = vad.process(&chunk).unwrap_or(0.0);
-
-                    if prob >= 0.5 {
-                        is_speaking = true;
-                        silence_samples = 0;
-                        speech_buffer.extend_from_slice(&chunk);
-                    } else if is_speaking {
-                        silence_samples += 512;
-                        speech_buffer.extend_from_slice(&chunk);
-
-                        if silence_samples >= 8000 { // 500ms at 16kHz
-                            // End of utterance
-                            let segment = std::mem::take(&mut speech_buffer);
-                            let _ = segment_tx.blocking_send(segment);
-                            is_speaking = false;
-                            silence_samples = 0;
-                        }
-                    }
-
-                    // Force-segment at 10 seconds
-                    if speech_buffer.len() > 160_000 {
-                        let segment = std::mem::take(&mut speech_buffer);
-                        let _ = segment_tx.blocking_send(segment);
-                    }
-                }
-            })
-            .expect("Failed to spawn audio thread")
-    }
 }
 ```
 
@@ -975,41 +1264,41 @@ impl Pipeline {
 
 ## 9. Custom Dictionary
 
-Users need to teach VoxFlow proper nouns, technical terms, and custom substitutions.
-
 ### 9.1 Storage (SQLite)
 
 ```sql
 CREATE TABLE dictionary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    spoken TEXT NOT NULL UNIQUE,      -- what the user says
-    written TEXT NOT NULL,            -- what should be typed
-    category TEXT DEFAULT 'general',  -- general, name, technical, abbreviation
+    spoken TEXT NOT NULL UNIQUE,
+    written TEXT NOT NULL,
+    category TEXT DEFAULT 'general',
+    is_command_phrase INTEGER DEFAULT 0,
     use_count INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT (datetime('now'))
 );
-
--- Examples:
-INSERT INTO dictionary (spoken, written, category) VALUES
-    ('vox flow', 'VoxFlow', 'name'),
-    ('tauri', 'Tauri', 'technical'),
-    ('rust lang', 'Rust', 'technical'),
-    ('my email', 'engineer@example.com', 'abbreviation'),
-    ('sig block', 'Best regards,\nJohn Smith\nSenior Engineer', 'abbreviation');
 ```
 
-### 9.2 Integration
+**rusqlite 0.38 note:** No `FromSql` for `chrono::DateTime<Utc>`. Use `String` (ISO 8601) for timestamps.
 
-The dictionary is injected into the LLM prompt as additional context:
+### 9.2 Dictionary Cache
+
+```rust
+pub struct DictionaryCache {
+    cache: RwLock<HashMap<String, String>>,  // spoken → written, O(1) lookup
+}
+```
+
+Loaded into memory at startup. Updated on dictionary changes. Command phrase exclusion (FR-007) — entries marked `is_command_phrase = 1` are excluded from substitution.
+
+### 9.3 LLM Integration
+
+Top 50 dictionary entries injected into the system prompt as hints:
 
 ```
 Custom dictionary (apply these substitutions):
-- "vox flow" → "VoxFlow"
-- "tauri" → "Tauri"
+- "vox" → "Vox"
 - "my email" → "engineer@example.com"
 ```
-
-For high-frequency terms, we also apply simple string replacement on the raw transcript before it reaches the LLM, to reduce inference load.
 
 ---
 
@@ -1017,149 +1306,153 @@ For high-frequency terms, we also apply simple string replacement on the raw tra
 
 ### 10.1 User Settings Schema
 
-```typescript
-interface Settings {
+```rust
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Settings {
     // Audio
-    inputDevice: string | null;       // null = system default
-    noiseGate: number;                // 0.0–1.0, default 0.0 (disabled)
+    pub input_device: Option<String>,
+    pub noise_gate: f32,              // 0.0–1.0, default 0.0
 
     // VAD
-    vadThreshold: number;             // 0.0–1.0, default 0.5
-    minSilenceMs: number;             // default 500
-    minSpeechMs: number;              // default 250
+    pub vad_threshold: f32,           // 0.0–1.0, default 0.5
+    pub min_silence_ms: u32,          // default 500
+    pub min_speech_ms: u32,           // default 250
 
     // ASR
-    language: string;                 // "en", "auto", or BCP-47 code
-    whisperModel: string;             // model filename
+    pub language: String,             // "en", "auto", or BCP-47
+    pub whisper_model: String,        // model filename
 
     // LLM
-    llmModel: string;                 // model filename
-    temperature: number;              // 0.0–1.0, default 0.1
-    removeFillersEnabled: boolean;    // default true
-    courseCorrectionEnabled: boolean; // default true
-    punctuationEnabled: boolean;      // default true
+    pub llm_model: String,            // model filename
+    pub temperature: f32,             // 0.0–1.0, default 0.1
+    pub remove_fillers: bool,         // default true
+    pub course_correction: bool,      // default true
+    pub punctuation: bool,            // default true
 
     // Hotkey
-    activationHotkey: string;         // default "Fn" or "CapsLock"
-    holdToTalk: boolean;              // true = push-to-talk, false = toggle
-    handsFreeDoublePress: boolean;    // default true
+    pub activation_hotkey: String,    // default "CapsLock"
+    pub hold_to_talk: bool,           // true = push-to-talk, false = toggle
+    pub hands_free_double_press: bool,// default true
 
     // Appearance
-    overlayPosition: 'bottom-center' | 'bottom-left' | 'bottom-right' | 'top-center';
-    overlayOpacity: number;           // 0.0–1.0, default 0.85
-    showRawTranscript: boolean;       // default false (debug mode)
-    theme: 'system' | 'light' | 'dark';
+    pub overlay_position: OverlayPosition,
+    pub overlay_opacity: f32,         // 0.0–1.0, default 0.85
+    pub show_raw_transcript: bool,    // default false
+    pub theme: ThemeMode,             // System, Light, Dark
 
     // Advanced
-    maxSegmentMs: number;             // default 10000
-    overlapMs: number;                // default 1000
-    commandPrefix: string;            // default "hey vox"
+    pub max_segment_ms: u32,          // default 10000
+    pub overlap_ms: u32,              // default 1000
+    pub command_prefix: String,       // default "hey vox"
 }
 ```
 
 ### 10.2 Persistence
 
-Settings are stored via the Tauri Store plugin (JSON file in the app data directory). The dictionary uses SQLite (via `rusqlite` with bundled SQLite).
+Settings stored as JSON file. Dictionary and transcript history in SQLite. All in platform app data directory.
 
 ```
 # Windows
-%APPDATA%/com.voxflow.app/settings.json
-%APPDATA%/com.voxflow.app/dictionary.db
+%APPDATA%/com.vox.app/settings.json
+%APPDATA%/com.vox.app/vox.db
 
 # macOS
-~/Library/Application Support/com.voxflow.app/settings.json
-~/Library/Application Support/com.voxflow.app/dictionary.db
+~/Library/Application Support/com.vox.app/settings.json
+~/Library/Application Support/com.vox.app/vox.db
 ```
 
 ---
 
 ## 11. Model Management
 
-### 11.1 First-Run Download
+### 11.1 First-Run: Fully Automatic
 
-On first launch, VoxFlow checks for models and offers to download them:
+There is no "welcome screen," no "click to download" prompt, no setup wizard. The app launches, the overlay appears, and if models are missing it starts downloading them immediately. The user sees progress in the overlay HUD.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Welcome to VoxFlow                        │
-│                                                             │
-│  VoxFlow needs to download AI models to work.               │
-│  This is a one-time download (~3.5 GB total).               │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ ☑ Whisper Large V3 Turbo (Q5_0)     ~1.8 GB        │    │
-│  │ ☑ Qwen 2.5 3B Instruct (Q4_K_M)    ~1.6 GB        │    │
-│  │ ☑ Silero VAD v5                     ~1.1 MB        │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                             │
-│               [ Download & Continue ]                       │
-│               [ I have models already → browse ]            │
-└─────────────────────────────────────────────────────────────┘
-```
+**All three models download concurrently:**
+- **Silero VAD v5** (~1.1 MB)
+- **Whisper Large V3 Turbo Q5_0** (~1.8 GB)
+- **Qwen 2.5 3B Instruct Q4_K_M** (~1.6 GB)
+
+Total: ~3.4 GB. All three must complete before the pipeline activates.
+
+**If download fails:**
+- Overlay shows: model directory path + direct download URLs
+- "Open Folder" button opens the model directory in file explorer
+- "Retry Download" button retries
+- App keeps running and polls for model files every 5 seconds
+- The moment models appear on disk (manual download, USB transfer, whatever), they're detected and loaded
+
+**If models already exist** (user copied them, reinstall, etc.): download is skipped, pipeline loads immediately.
 
 ### 11.2 Model Sources
 
 | Model | Source | URL |
 |---|---|---|
-| Whisper Large V3 Turbo Q5_0 | Hugging Face (ggerganov) | `huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin` |
-| Qwen 2.5 3B Instruct Q4_K_M | Hugging Face (bartowski) | `huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf` |
-| Silero VAD v5 | GitHub (snakers4) | `github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx` |
+| Whisper Large V3 Turbo Q5_0 | Hugging Face | `huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin` |
+| Qwen 2.5 3B Instruct Q4_K_M | Hugging Face | `huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf` |
+| Silero VAD v5 | GitHub | `github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx` |
 
 ### 11.3 Model Storage
 
 ```
 # Windows
-%LOCALAPPDATA%/com.voxflow.app/models/
+%LOCALAPPDATA%/com.vox.app/models/
 
 # macOS
-~/Library/Application Support/com.voxflow.app/models/
+~/Library/Application Support/com.vox.app/models/
 ```
 
 ### 11.4 Model Swapping
 
-Users can swap models via the settings panel. VoxFlow validates GGUF/GGML/ONNX format and runs a quick benchmark on load to verify GPU acceleration is working.
+Users can swap models via the Model panel. Vox validates GGUF/GGML/ONNX format and runs a quick benchmark on load to verify GPU acceleration is working.
 
 ---
 
 ## 12. Error Handling Strategy
 
-### 12.1 Error Categories
+### 12.1 Core Principle: Never Stop Working
+
+Every error has an automatic recovery path. The user should never see a dead app. If something breaks, the pipeline restarts itself. If a component crashes, it is restarted and retried — not skipped.
+
+### 12.2 Error Categories
 
 | Category | Examples | Recovery |
 |---|---|---|
-| Audio | Device disconnected, permission denied | Notify user, pause pipeline, retry on device change |
-| Model | File missing, corrupt, OOM | Show download prompt, suggest smaller model |
-| ASR | Whisper crash, empty result | Log, skip segment, continue |
-| LLM | Timeout, OOM, garbled output | Fall back to raw transcript (inject without polishing) |
-| Injection | Focus lost, permission denied | Buffer text, retry, show in overlay for manual copy |
-| System | GPU driver crash, CUDA error | Restart pipeline, fall back to CPU |
+| Audio | Device disconnected, permission denied | Switch to default device. If no device: pause pipeline, show message, retry every 2s |
+| Model missing | File not found on disk | Auto-download. If no internet: show manual instructions, poll for files every 5s |
+| Model corrupt | Bad GGML/GGUF/ONNX file | Delete and re-download automatically |
+| Model OOM | GPU out of memory | Show error with specific guidance (close other GPU apps, or use a smaller quantization) |
+| ASR failure | Whisper crash on a segment | Log error, retry the segment once. If retry fails, discard segment and continue listening. |
+| LLM failure | Timeout, garbled output on a segment | Retry the segment once. If retry fails, discard segment and continue listening. |
+| Injection | Focus lost, permission denied | Buffer text, show in overlay with "Copy" button. Retry injection on next focus event. |
+| GPU crash | CUDA error, driver crash | Show error with instructions to restart the app. |
 
-### 12.2 Graceful Degradation Chain
+### 12.3 Pipeline Recovery
 
 ```
-Full Pipeline (GPU ASR + GPU LLM)
-        │ LLM fails
+Pipeline Running (VAD + GPU ASR + GPU LLM)
+        │ component crashes on a segment
         ▼
-Reduced Pipeline (GPU ASR only, raw transcript injected)
-        │ GPU fails
+Retry Segment (restart component, reprocess same audio)
+        │ retry succeeds → back to running
+        │ retry fails → discard segment, log error
         ▼
-CPU Pipeline (whisper.cpp CPU mode, no LLM)
-        │ ASR fails entirely
-        ▼
-Error State (notify user, offer to restart)
+Continue Listening (pipeline stays active for next segment)
 ```
+
+If a model file becomes corrupted or deleted while the app is running, the pipeline stops and re-enters the downloading state. Once the model is back on disk, it reloads and resumes.
 
 ### 12.3 Logging
 
-We use the `tracing` crate with structured logging. Logs are written to:
+`tracing` crate with structured logging. Logs written to:
 
 ```
-# Rotated daily, 7-day retention
-%LOCALAPPDATA%/com.voxflow.app/logs/  (Windows)
-~/Library/Logs/com.voxflow.app/       (macOS)
+%LOCALAPPDATA%/com.vox.app/logs/  (Windows)
+~/Library/Logs/com.vox.app/       (macOS)
 ```
 
-Log levels: `ERROR` (always), `WARN` (default), `INFO` (verbose), `DEBUG` (development), `TRACE` (pipeline timing).
+Log levels: `ERROR` (always), `WARN` (default), `INFO` (verbose), `DEBUG` (development), `TRACE` (pipeline timing). Rotated daily, 7-day retention.
 
 ---
 
@@ -1188,20 +1481,12 @@ Log levels: `ERROR` (always), `WARN` (default), `INFO` (verbose), `DEBUG` (devel
 | Disk (app + data) | < 50 MB | < 50 MB |
 | Binary size | < 15 MB | < 15 MB |
 
-### 13.3 Benchmark Harness
+### 13.3 Build Time Budget
 
-```bash
-# Run the latency benchmark
-cargo test --release --features cuda benchmark_ -- --nocapture
-
-# Benchmark output format:
-# [BENCH] audio_capture_latency: p50=0.8ms p99=2.1ms
-# [BENCH] vad_inference:         p50=0.3ms p99=0.9ms
-# [BENCH] whisper_5s_audio:      p50=38ms  p99=52ms
-# [BENCH] llm_30_tokens:         p50=180ms p99=220ms
-# [BENCH] text_injection:        p50=15ms  p99=28ms
-# [BENCH] e2e_pipeline:          p50=245ms p99=310ms
-```
+| Build Type | Target |
+|---|---|
+| Clean build (first time, includes whisper.cpp/llama.cpp C++ compilation) | < 5 min |
+| Incremental build (Rust-only changes) | < 10 sec |
 
 ---
 
@@ -1211,10 +1496,10 @@ cargo test --release --features cuda benchmark_ -- --nocapture
 
 | Threat | Mitigation |
 |---|---|
-| Audio exfiltration | All processing local. No network calls after model download. Firewall the app. |
+| Audio exfiltration | All processing local. No network calls after model download. |
 | Model tampering | SHA-256 checksum verification on download. Models are read-only after download. |
-| Keystroke injection abuse | Injection only active when user explicitly activates recording. System tray shows state. |
-| Transcript leakage | Transcript history is stored locally in SQLite with optional encryption (SQLCipher). |
+| Keystroke injection abuse | Injection only active when user explicitly activates recording. Tray icon shows state. |
+| Transcript leakage | Transcript history stored locally in SQLite. |
 | Malicious model | Only download from pinned Hugging Face URLs. Verify file hashes. |
 
 ### 14.2 Permissions
@@ -1224,32 +1509,16 @@ cargo test --release --features cuda benchmark_ -- --nocapture
 - No admin/elevated privileges required
 
 **macOS:**
-- Microphone access (Info.plist + runtime prompt)
-- Accessibility permission (for CGEvent text injection — prompted by OS)
+- Microphone access (runtime prompt)
+- Accessibility permission (for CGEvent text injection)
 - Input Monitoring permission (for global hotkeys)
-
-These are configured in `tauri.conf.json` and the macOS `Info.plist`:
-
-```json
-{
-  "bundle": {
-    "macOS": {
-      "entitlements": "./Entitlements.plist",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "VoxFlow needs microphone access for voice dictation.",
-        "NSAppleEventsUsageDescription": "VoxFlow needs accessibility access to type text into other applications."
-      }
-    }
-  }
-}
-```
 
 ### 14.3 Audio Data Policy
 
 - Audio is processed in memory and immediately discarded after transcription.
 - No audio is written to disk at any point.
 - Transcript history can be disabled entirely in settings.
-- The "clear history" button performs a secure delete (overwrite + VACUUM on SQLite).
+- "Clear history" performs a secure delete (overwrite + VACUUM on SQLite).
 
 ---
 
@@ -1272,6 +1541,7 @@ These are configured in `tauri.conf.json` and the macOS `Info.plist`:
 
 ```rust
 #[tokio::test]
+#[ignore] // requires ML models
 async fn test_full_pipeline_hello_world() {
     let pipeline = TestPipeline::new().await;
     let audio = load_wav("fixtures/hello_world.wav");
@@ -1280,6 +1550,7 @@ async fn test_full_pipeline_hello_world() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_course_correction() {
     let pipeline = TestPipeline::new().await;
     let audio = load_wav("fixtures/correction_tuesday_wednesday.wav");
@@ -1287,31 +1558,13 @@ async fn test_course_correction() {
     assert!(result.contains("Wednesday"));
     assert!(!result.contains("Tuesday"));
 }
-
-#[tokio::test]
-async fn test_filler_removal() {
-    let pipeline = TestPipeline::new().await;
-    let audio = load_wav("fixtures/um_uh_like.wav");
-    let result = pipeline.process_segment(&audio).await.unwrap();
-    assert!(!result.contains("um"));
-    assert!(!result.contains("uh"));
-    assert!(!result.to_lowercase().contains("like,"));
-}
-
-#[tokio::test]
-async fn test_voice_command_delete() {
-    let pipeline = TestPipeline::new().await;
-    let audio = load_wav("fixtures/delete_that.wav");
-    let result = pipeline.process_segment_raw(&audio).await.unwrap();
-    assert!(matches!(result, ProcessorOutput::Command(_)));
-}
 ```
 
 ### 15.3 Performance Tests
 
-- **Latency regression test:** Assert e2e latency < 500ms (4090) / < 1000ms (M4 Pro) on a standard 5-second audio clip.
-- **Memory leak test:** Run 1000 segments through the pipeline, assert RSS stays within 2x of baseline.
-- **VRAM leak test:** Monitor `nvidia-smi` / Metal memory after 1000 segments.
+- **Latency regression:** Assert e2e < 500ms (4090) / < 1000ms (M4 Pro) on standard 5s clip.
+- **Memory leak:** Run 1000 segments, assert RSS within 2x baseline.
+- **VRAM leak:** Monitor after 1000 segments.
 
 ### 15.4 Manual Test Matrix
 
@@ -1340,40 +1593,23 @@ async fn test_voice_command_delete() {
 
 ### 16.1 Build Artifacts
 
-| Platform | Format | Signing |
+| Platform | Format | Size Target |
 |---|---|---|
-| Windows | `.msi` installer + portable `.exe` | Self-signed (dev), EV code sign (release) |
-| macOS | `.dmg` with signed `.app` bundle | Apple Developer ID (notarized) |
+| Windows | Single `.exe` (portable) + `.msi` installer | < 15 MB |
+| macOS | `.app` bundle in `.dmg` | < 15 MB |
 
-Tauri v2 handles both via `cargo tauri build`.
+No web assets to bundle. Single static Rust binary.
 
-### 16.2 Auto-Update
+### 16.2 First-Run Experience
 
-Tauri's built-in updater plugin checks for updates on launch (configurable). Updates are signed with an Ed25519 key pair.
+1. User installs Vox (< 15 MB).
+2. First launch: overlay HUD appears **instantly**.
+3. All three models auto-download concurrently (progress shown in overlay, ~3.4 GB total).
+4. All models downloaded. GPU detected. Models loaded onto GPU.
+5. Pipeline activates. Overlay shows "IDLE — Press [Fn] to start dictating."
+6. macOS: Accessibility permission prompt fires on first dictation attempt (OS-triggered, unavoidable).
 
-```json
-// tauri.conf.json
-{
-  "plugins": {
-    "updater": {
-      "active": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ...",
-      "endpoints": [
-        "https://releases.voxflow.app/{{target}}/{{arch}}/{{current_version}}"
-      ]
-    }
-  }
-}
-```
-
-### 16.3 First-Run Experience
-
-1. User installs VoxFlow (< 15 MB).
-2. First launch: welcome screen + model download (~3.5 GB, progress bar).
-3. GPU detection + quick benchmark (5 seconds).
-4. Accessibility permission prompts (macOS).
-5. Hotkey configuration.
-6. Ready to dictate.
+**Zero-click setup.** Install → launch → wait for download → dictate. Nothing to configure unless they want to.
 
 ---
 
@@ -1381,14 +1617,14 @@ Tauri's built-in updater plugin checks for updates on launch (configurable). Upd
 
 ### v1.0 — Foundation (This Document)
 
-- [x] Core pipeline: Audio → VAD → ASR → LLM → Inject
-- [x] Windows (CUDA) + macOS (Metal)
-- [x] Hold-to-talk + toggle + hands-free modes
-- [x] Custom dictionary
-- [x] Voice commands (basic set)
-- [x] System tray + overlay HUD
-- [x] Settings panel
-- [x] Transcript history
+- [ ] Core pipeline: Audio → VAD → ASR → LLM → Inject
+- [ ] Windows (CUDA) + macOS (Metal)
+- [ ] Hold-to-talk + toggle + hands-free modes
+- [ ] Custom dictionary
+- [ ] Voice commands (basic set)
+- [ ] System tray + overlay HUD
+- [ ] Settings panel (GPUI native)
+- [ ] Transcript history
 
 ### v1.1 — Polish
 
@@ -1403,13 +1639,11 @@ Tauri's built-in updater plugin checks for updates on launch (configurable). Upd
 - [ ] Auto language detection
 - [ ] Per-language dictionaries
 - [ ] Mixed-language dictation (code-switching)
-- [ ] Moonshine integration for ultra-low-latency languages
 
 ### v2.0 — Intelligence
 
 - [ ] Context-aware tone (formal in email, casual in Slack)
-- [ ] Screen context via screenshot (à la Wispr Flow)
-- [ ] iOS companion app (Tauri v2 mobile)
+- [ ] Screen context via screenshot
 - [ ] Shared team dictionaries
 - [ ] Custom fine-tuned ASR models
 
@@ -1420,26 +1654,42 @@ Tauri's built-in updater plugin checks for updates on launch (configurable). Upd
 ### A. Key Crate Versions (Pinned)
 
 ```toml
-# Cargo.toml — verified compatible set as of 2026-02-04
-tauri = "2.10"
-cpal = "0.15"
+# Verified compatible set as of 2026-02-19
+gpui = { git = "https://github.com/zed-industries/zed" }
+cpal = "0.17"
 ringbuf = "0.4"
-rubato = "0.16"
-ort = "2.0"
-whisper-rs = "0.13"
-llama-cpp-rs = "0.4"
+rubato = "1.0"
+ort = "2.0.0-rc.11"
+whisper-rs = "0.15.1"
+llama-cpp-2 = "0.1"          # utilityai crate, NOT llama-cpp-rs
 serde = "1.0"
 serde_json = "1.0"
-tokio = "1.43"
+tokio = "1.49"
+reqwest = "0.13"
 anyhow = "1.0"
 tracing = "0.1"
-rusqlite = "0.32"
-windows = "0.58"
-objc2 = "0.5"
-core-graphics = "0.24"
+rusqlite = "0.38"
+windows = "0.62"
+objc2 = "0.6"
+objc2-core-graphics = "0.3"  # NOT Servo core-graphics
+global-hotkey = "0.6"
+tray-icon = "0.19"
+parking_lot = "0.12"
 ```
 
-### B. GGML Quantization Reference
+### B. Known API Gotchas
+
+| Crate | Gotcha |
+|---|---|
+| ringbuf 0.4 | `occupied_len()` lives on `Observer` trait. Must `use ringbuf::traits::Observer` |
+| whisper-rs 0.15 | `full_n_segments()` returns `c_int` (NOT Result). Segment text via `state.get_segment(i).to_str_lossy()` |
+| llama-cpp-2 0.1 | Types nested: `model::LlamaModel`, `model::params::LlamaModelParams`. `load_from_file` needs `&LlamaBackend` first arg. `str_to_token` takes `AddBos` enum |
+| cpal 0.17 | `device.description()` returns `DeviceDescription` struct. Sample rate methods return `u32` directly |
+| rusqlite 0.38 | No `FromSql` for `chrono::DateTime<Utc>`. Use `String` (ISO 8601) instead |
+| macOS CGEvent | Undocumented 20-char limit per call. Must chunk text |
+| Windows SendInput | Can't inject into elevated processes (UIPI) |
+
+### C. GGML Quantization Reference
 
 | Quantization | Bits/Weight | Size (3B model) | Quality Loss | Speed Gain |
 |---|---|---|---|---|
@@ -1450,7 +1700,7 @@ core-graphics = "0.24"
 | Q3_K_M | 3.5 | ~1.4 GB | Noticeable | ~3x |
 | Q2_K | 2.5 | ~1.1 GB | Significant | ~3.5x |
 
-### C. Whisper Model Size Reference
+### D. Whisper Model Size Reference
 
 | Model | Params | Disk (Q5_0) | VRAM (Q5_0) | English WER |
 |---|---|---|---|---|
@@ -1461,40 +1711,34 @@ core-graphics = "0.24"
 | Large V3 | 1.55B | ~1.6 GB | ~3 GB | ~7.4% |
 | **Large V3 Turbo** | **809M** | **~900 MB** | **~1.8 GB** | **~8%** |
 
-### D. Alternative ASR Engines (Evaluated)
+### E. Alternative ASR Engines (Evaluated)
 
 | Engine | Verdict | Notes |
 |---|---|---|
-| **whisper.cpp** | **✅ Selected** | Best ecosystem, CUDA+Metal, active maintenance, Rust bindings |
-| Moonshine | ✅ v2 candidate | Best for edge/mobile. Overkill on 4090/M4 Pro, but ideal for future iOS. |
-| faster-whisper | ⚠️ Python only | CTranslate2 backend, excellent perf, but Python runtime dependency. |
-| Canary Qwen 2.5B | ⚠️ Accuracy king | #1 on Open ASR, but NeMo dependency is heavy, no simple C FFI. |
-| Parakeet TDT | ⚠️ Speed king | 2000x RTFx, but NeMo-only and English-only. |
-| Distil-Whisper | ⚠️ Good tradeoff | 6x faster than V3, but no ggml format, Python-native. |
+| **whisper.cpp** | **Selected** | Best ecosystem, CUDA+Metal, active maintenance, Rust bindings |
+| Moonshine | v2 candidate | Best for edge/mobile. Overkill on 4090/M4 Pro. |
+| faster-whisper | Python only | CTranslate2 backend, no simple C FFI |
+| Canary Qwen 2.5B | Accuracy king | NeMo dependency is heavy, no simple C FFI |
 
-### E. Alternative LLM Models (Evaluated)
+### F. Alternative LLM Models (Evaluated)
 
 | Model | Verdict | Notes |
 |---|---|---|
-| **Qwen 2.5 3B Instruct** | **✅ Selected** | Best instruction following at 3B, multilingual, fast |
-| Phi-3.5 Mini 3.8B | ⚠️ Close second | Slightly larger, good at structured output |
-| Llama 3.2 3B | ⚠️ Good | Strong general capability, weaker on formatting tasks |
-| Gemma 2 2B | ⚠️ Smallest | Fastest inference, but quality drops on edge cases |
-| SmolLM2 1.7B | ⚠️ Ultra-small | For extreme resource constraints only |
-
-### F. Accessibility Permissions Setup (macOS)
-
-VoxFlow requires two macOS permissions that cannot be programmatically requested — the user must grant them manually:
-
-1. **Accessibility** (System Settings → Privacy & Security → Accessibility)
-   - Required for: CGEvent text injection into other applications
-   - VoxFlow will show a dialog with instructions if not granted
-
-2. **Input Monitoring** (System Settings → Privacy & Security → Input Monitoring)
-   - Required for: Global hotkey capture when VoxFlow is not focused
-   - Tauri's global shortcut plugin triggers the OS prompt automatically
+| **Qwen 2.5 3B Instruct** | **Selected** | Best instruction following at 3B, multilingual, fast |
+| Phi-3.5 Mini 3.8B | Close second | Slightly larger, good at structured output |
+| Llama 3.2 3B | Good | Strong general capability, weaker on formatting |
+| Gemma 2 2B | Smallest | Fastest inference, quality drops on edge cases |
 
 ### G. GPU Detection Logic
 
-On Windows, query `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader` to detect CUDA GPUs. On macOS, Metal is always available on Apple Silicon — query unified memory via `sysctl hw.memsize`. Fall back to CPU-only if no GPU is detected, and suggest the user install appropriate drivers.
+**Windows:** Query `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader` to detect CUDA GPUs. GPU is required on Windows — if not detected, show error with driver installation instructions.
+**macOS:** Metal is always available on Apple Silicon. Query unified memory via `sysctl hw.memsize`.
+
+### H. macOS Accessibility Permissions
+
+Vox requires two macOS permissions granted manually:
+
+1. **Accessibility** (System Settings → Privacy & Security → Accessibility) — for CGEvent text injection
+2. **Input Monitoring** (System Settings → Privacy & Security → Input Monitoring) — for global hotkeys
+
 *End of Design Document*
