@@ -70,6 +70,13 @@ Three-crate workspace:
 
 GPUI patterns (from Zed): `Entity<T>` for state, `Render` trait for views, `cx.set_global()` for app-wide state, `div()` builder API, `Action` trait for keybindings.
 
+## Reference Repositories
+
+Two GPUI apps are cloned locally. Consult these before inventing new patterns.
+
+- **Zed** (`D:\SRC\zed`) — The GPUI framework source (`crates/gpui/`). Authoritative reference for GPUI patterns: entity state, rendering, actions, window management.
+- **Tusk** (`D:\SRC\tusk`) — Native PostgreSQL client, Rust/GPUI. Same three-crate workspace architecture as Vox. Reference for practical GPUI app patterns: settings, multi-panel layouts, list views, OS integrations.
+
 ## Pinned Dependency Versions
 
 These are verified compatible. Using wrong versions will cause compile failures or runtime bugs.

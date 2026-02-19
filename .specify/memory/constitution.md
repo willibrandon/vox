@@ -1,30 +1,32 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.0.0 → 1.1.0 (MINOR — new principle added)
+  Version change: 1.1.0 → 1.2.0 (MINOR — new section added)
 
   Modified principles: None
 
   Added sections:
-    - Principle VI: Scope Only Increases
+    - Reference Repositories (Zed and Tusk as local references)
 
   Removed sections: None
 
   Templates requiring updates:
-    ✅ plan-template.md — Constitution Check section is generic;
-        Principle VI will be checked via the Compliance Review
-        list below. No template file change needed.
+    ✅ plan-template.md — no changes needed; generic Constitution
+        Check covers new section implicitly
     ✅ spec-template.md — compatible; no changes needed
     ✅ tasks-template.md — compatible; no changes needed
     ✅ agent-file-template.md — compatible; no changes needed
     ✅ checklist-template.md — compatible; no changes needed
+
+  Companion updates:
+    ✅ CLAUDE.md — Reference Repositories section added
 
   Deferred items: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Ratified**: 2026-02-19
 **Last Amended**: 2026-02-19
 
@@ -111,6 +113,27 @@ are binding. Any implementation that exceeds these limits is a bug.
   `#[allow(...)]` is acceptable only with a justifying comment.
 - **Feature specs**: Live in `specs/NNN-feature-name/`.
 - **Constitution location**: `.specify/memory/constitution.md`.
+
+## Reference Repositories
+
+Two GPUI applications are cloned locally and MUST be used as
+implementation references when building Vox features.
+
+- **Zed** (`D:\SRC\zed`) — The Zed code editor. Source of the GPUI
+  framework itself (`crates/gpui/`). Reference for GPUI patterns:
+  `Entity<T>` state management, `Render` trait, `div()` builder API,
+  `Action` keybindings, window management, and context menus. The
+  authoritative source for how GPUI is meant to be used.
+
+- **Tusk** (`D:\SRC\tusk`) — A native PostgreSQL client built with
+  Rust and GPUI. Shares the same three-crate workspace architecture
+  as Vox (binary + core + UI). Reference for practical GPUI app
+  patterns: settings management, multi-panel layouts, list views,
+  and OS-level integrations in a non-editor context.
+
+When implementing GPUI UI components, consult Zed for framework-level
+patterns and Tusk for application-level patterns before inventing new
+approaches.
 
 ## Governance
 
