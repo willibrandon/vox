@@ -57,7 +57,8 @@ Zero warnings required. `#[allow(...)]` only with justifying comment.
 - Rust 1.85+ (2024 edition), CMake 4.0+
 - **Windows**: Visual Studio 2022 Build Tools, CUDA 12.8+, cuDNN 9.x
 - **Windows CUDA gotcha**: CUDA doesn't support VS 18 Insiders. `CMAKE_GENERATOR` must be set to `Visual Studio 17 2022`. Both `CMAKE_GENERATOR` and `CUDA_PATH` are persistent user env vars.
-- **macOS**: Xcode 26.x + Command Line Tools. Metal is automatic.
+- **macOS**: Xcode 26.x + Command Line Tools. Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`.
+- **macOS GPUI gotcha**: GPUI's font-kit pulls `core-text 21.1` which depends on `core-graphics 0.25`, conflicting with font-kit's 0.24. Pin `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` in macOS deps (already done in `crates/vox/Cargo.toml`).
 - No Node.js, pnpm, or any web toolchain.
 
 ## Architecture
@@ -83,18 +84,18 @@ These are verified compatible. Using wrong versions will cause compile failures 
 
 | Crate | Version | Critical Notes |
 |---|---|---|
-| gpui | git (zed-industries/zed) | Pin to specific rev |
+| gpui | git rev `89e9ab97` (zed-industries/zed) | Resolves to gpui v0.2.2. Must use `package = "gpui"` in workspace dep. Matches Tusk pin. |
 | cpal | 0.17 | `SampleRate` is `u32`. `device.description()` returns `DeviceDescription` struct — use `.name()`. Auto RT priority. |
 | ringbuf | 0.4 | `occupied_len()` on `Observer` trait — must `use ringbuf::traits::Observer` |
 | rubato | 1.0 | Major API redesign from 0.16. Use `AudioAdapter` trait + `SequentialSliceOfVecs` |
 | ort | 2.0.0-rc.11 | RC but production-ready |
-| whisper-rs | 0.15.1 | Codeberg (not crates.io). Flash attn disabled. `full_n_segments()` returns `c_int` not Result |
+| whisper-rs | 0.15.1 | crates.io (source code on Codeberg). Flash attn disabled. `full_n_segments()` returns `c_int` not Result |
 | llama-cpp-2 | 0.1 (utilityai) | **NOT `llama-cpp-rs` 0.4** — completely different crate. Types nested: `model::LlamaModel`. `load_from_file` needs `&LlamaBackend` first arg |
 | windows | 0.62 | Win32 SendInput. Can't inject into elevated processes (UIPI) |
 | objc2 | 0.6 | **NOT Servo `core-graphics`** (heading toward deprecation). Use `objc2-core-graphics` 0.3 |
 | rusqlite | 0.38 | No `FromSql` for `chrono::DateTime<Utc>` — use `String` (ISO 8601) for timestamps |
 | tokio | 1.49 | — |
-| reqwest | 0.13 | rustls default. `query`/`form` features are opt-in |
+| reqwest | 0.12 | 0.13 exists but is a separate semver line. Using 0.12 with `stream` feature. rustls default. |
 
 ## Thread Safety
 
