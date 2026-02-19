@@ -1,0 +1,51 @@
+[package]
+name = "vox_core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "vox_core"
+path = "src/vox_core.rs"
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda", "llama-cpp-2/cuda"]
+metal = ["whisper-rs/metal", "llama-cpp-2/metal"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
+
+# Audio
+cpal = "0.17"
+ringbuf = "0.4"
+rubato = "1.0"
+
+# ML
+ort = { version = "2.0.0-rc.11", features = ["load-dynamic"] }
+whisper-rs = "0.15.1"
+llama-cpp-2 = "0.1"
+
+# Storage & networking
+rusqlite = { version = "0.38", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["stream"] }
+
+# Hotkey & tray
+global-hotkey = "0.6"
+tray-icon = "0.19"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-graphics = "0.3"

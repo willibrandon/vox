@@ -1,0 +1,18 @@
+[package]
+name = "vox"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vox"
+path = "src/main.rs"
+
+[dependencies]
+vox_core = { path = "../vox_core" }
+vox_ui = { path = "../vox_ui" }
+gpui.workspace = true
+serde.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

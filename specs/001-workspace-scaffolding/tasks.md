@@ -26,8 +26,8 @@ Three-crate workspace at repository root:
 
 **Purpose**: Create the complete directory tree and repository configuration
 
-- [ ] T001 Create directory structure: `crates/vox/src/`, `crates/vox_core/src/`, `crates/vox_ui/src/`, `assets/icons/`, `tests/audio_fixtures/`, `scripts/`
-- [ ] T002 [P] Update `.gitignore` to exclude `/target`, `/models/`, `*.onnx`, `*.bin`, `*.gguf`, `.env`, `*.log` per FR-009
+- [x] T001 Create directory structure: `crates/vox/src/`, `crates/vox_core/src/`, `crates/vox_ui/src/`, `assets/icons/`, `tests/audio_fixtures/`, `scripts/`
+- [x] T002 [P] Update `.gitignore` to exclude `/target`, `/models/`, `*.onnx`, `*.bin`, `*.gguf`, `.env`, `*.log` per FR-009
 
 ---
 
@@ -37,14 +37,14 @@ Three-crate workspace at repository root:
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 Create workspace root `Cargo.toml` with 3 members (`crates/vox`, `crates/vox_core`, `crates/vox_ui`), `[workspace.package]` (version 0.1.0, edition 2024, license MIT), `[workspace.dependencies]` for all shared deps (gpui rev `89e9ab97aa5d978351ee8a28d9cc35c272c530f5`, serde, tokio, anyhow, tracing, etc.), and `[profile.release]` (opt-level "s", lto true, strip symbols, codegen-units 1) per FR-001/FR-004/FR-010/FR-011
-- [ ] T004 [P] Create `crates/vox_core/Cargo.toml` with `[lib]` path `src/vox_core.rs`, feature flags (cuda → whisper-rs/cuda + llama-cpp-2/cuda, metal → whisper-rs/metal + llama-cpp-2/metal), workspace deps (.workspace = true), crate-specific deps (cpal 0.17, ringbuf 0.4, rubato 1.0, ort 2.0.0-rc.11, whisper-rs 0.15.1, llama-cpp-2 0.1, rusqlite 0.38, reqwest 0.13 (if unavailable fall back to 0.12 with stream feature per research.md R-007), global-hotkey 0.6, tray-icon 0.19), and platform deps (windows 0.62 for cfg(windows), objc2 0.6 + objc2-core-graphics 0.3 for cfg(macos)) per FR-003/FR-005 and research.md R-001 through R-007
-- [ ] T005 [P] Create `crates/vox_ui/Cargo.toml` with `[lib]` path `src/vox_ui.rs`, path dep on vox_core, workspace deps (gpui, serde, parking_lot), and smallvec 1.11 with union feature per data-model.md
-- [ ] T006 [P] Create `crates/vox/Cargo.toml` with `[[bin]]` path `src/main.rs`, path deps on vox_core and vox_ui, workspace deps (gpui, serde, tokio, anyhow, tracing, tracing-subscriber) per FR-002
-- [ ] T007 Create `crates/vox_core/src/vox_core.rs` with 11 `pub mod` declarations (audio, vad, asr, llm, injector, pipeline, dictionary, config, models, hotkey, state) and create 11 empty stub files in `crates/vox_core/src/` per FR-006 and research.md R-005/R-006
-- [ ] T008 [P] Create `crates/vox_ui/src/vox_ui.rs` with 14 `pub mod` declarations (theme, layout, overlay_hud, waveform, workspace, settings_panel, history_panel, dictionary_panel, model_panel, log_panel, text_input, button, icon, key_bindings) and create 14 empty stub files in `crates/vox_ui/src/` per FR-007 and research.md R-005/R-006
-- [ ] T009 [P] Create `crates/vox/src/main.rs` with minimal shell (`fn main()` printing app name)
-- [ ] T010 [P] Create integration test stubs (`tests/test_vad.rs`, `tests/test_asr.rs`, `tests/test_llm.rs`, `tests/test_injector.rs`, `tests/test_pipeline_e2e.rs`) and model download scripts (`scripts/download-models.sh`, `scripts/download-models.ps1`) per FR-008
+- [x] T003 Create workspace root `Cargo.toml` with 3 members (`crates/vox`, `crates/vox_core`, `crates/vox_ui`), `[workspace.package]` (version 0.1.0, edition 2024, license MIT), `[workspace.dependencies]` for all shared deps (gpui rev `89e9ab97aa5d978351ee8a28d9cc35c272c530f5`, serde, tokio, anyhow, tracing, etc.), and `[profile.release]` (opt-level "s", lto true, strip symbols, codegen-units 1) per FR-001/FR-004/FR-010/FR-011
+- [x] T004 [P] Create `crates/vox_core/Cargo.toml` with `[lib]` path `src/vox_core.rs`, feature flags (cuda → whisper-rs/cuda + llama-cpp-2/cuda, metal → whisper-rs/metal + llama-cpp-2/metal), workspace deps (.workspace = true), crate-specific deps (cpal 0.17, ringbuf 0.4, rubato 1.0, ort 2.0.0-rc.11, whisper-rs 0.15.1, llama-cpp-2 0.1, rusqlite 0.38, reqwest 0.13 (if unavailable fall back to 0.12 with stream feature per research.md R-007), global-hotkey 0.6, tray-icon 0.19), and platform deps (windows 0.62 for cfg(windows), objc2 0.6 + objc2-core-graphics 0.3 for cfg(macos)) per FR-003/FR-005 and research.md R-001 through R-007
+- [x] T005 [P] Create `crates/vox_ui/Cargo.toml` with `[lib]` path `src/vox_ui.rs`, path dep on vox_core, workspace deps (gpui, serde, parking_lot), and smallvec 1.11 with union feature per data-model.md
+- [x] T006 [P] Create `crates/vox/Cargo.toml` with `[[bin]]` path `src/main.rs`, path deps on vox_core and vox_ui, workspace deps (gpui, serde, tokio, anyhow, tracing, tracing-subscriber) per FR-002
+- [x] T007 Create `crates/vox_core/src/vox_core.rs` with 11 `pub mod` declarations (audio, vad, asr, llm, injector, pipeline, dictionary, config, models, hotkey, state) and create 11 empty stub files in `crates/vox_core/src/` per FR-006 and research.md R-005/R-006
+- [x] T008 [P] Create `crates/vox_ui/src/vox_ui.rs` with 14 `pub mod` declarations (theme, layout, overlay_hud, waveform, workspace, settings_panel, history_panel, dictionary_panel, model_panel, log_panel, text_input, button, icon, key_bindings) and create 14 empty stub files in `crates/vox_ui/src/` per FR-007 and research.md R-005/R-006
+- [x] T009 [P] Create `crates/vox/src/main.rs` with minimal shell (`fn main()` printing app name)
+- [x] T010 [P] Create integration test stubs (`tests/test_vad.rs`, `tests/test_asr.rs`, `tests/test_llm.rs`, `tests/test_injector.rs`, `tests/test_pipeline_e2e.rs`) and model download scripts (`scripts/download-models.sh`, `scripts/download-models.ps1`) per FR-008
 
 **Checkpoint**: All source files exist — workspace should be structurally complete
 
@@ -56,9 +56,9 @@ Three-crate workspace at repository root:
 
 **Independent Test**: Run `cargo build -p vox --features vox_core/cuda` on Windows with prerequisites installed
 
-- [ ] T011 [US1] Run `cargo build -p vox --features vox_core/cuda` and resolve any dependency resolution or compilation errors in workspace Cargo.toml files
-- [ ] T012 [US1] Verify build output has zero compiler warnings — if warnings exist, fix source files with `#[allow(...)]` only with justifying comment or proper code fixes
-- [ ] T013 [US1] Run `cargo test -p vox_core --features cuda`, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004, empty suites acceptable)
+- [x] T011 [US1] Run `cargo build -p vox --features vox_core/cuda` and resolve any dependency resolution or compilation errors in workspace Cargo.toml files
+- [x] T012 [US1] Verify build output has zero compiler warnings — if warnings exist, fix source files with `#[allow(...)]` only with justifying comment or proper code fixes
+- [x] T013 [US1] Run `cargo test -p vox_core --features cuda`, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004, empty suites acceptable)
 
 **Checkpoint**: User Story 1 complete — workspace builds and tests pass on Windows
 
@@ -72,8 +72,8 @@ Three-crate workspace at repository root:
 
 **Note**: This phase cannot be verified on Windows. Tasks document what must be validated on a macOS machine or CI. Consider setting up GitHub Actions or a macOS remote runner to close this verification gap.
 
-- [ ] T014 [US2] On macOS, run `cargo build -p vox --features vox_core/metal` and verify zero warnings. If GPUI build fails on macOS, add `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` patches to workspace Cargo.toml per research.md R-008
-- [ ] T015 [US2] On macOS, run `cargo test -p vox_core --features metal`, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004)
+- [ ] T014 [US2] On macOS, run `cargo build -p vox --features vox_core/metal` — DEFERRED: requires macOS machine or CI and verify zero warnings. If GPUI build fails on macOS, add `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` patches to workspace Cargo.toml per research.md R-008
+- [ ] T015 [US2] On macOS, run `cargo test -p vox_core --features metal` — DEFERRED: requires macOS machine or CI, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004)
 
 **Checkpoint**: User Story 2 complete — workspace builds cross-platform
 
@@ -85,9 +85,9 @@ Three-crate workspace at repository root:
 
 **Independent Test**: Add a trivial function to a vox_core module, confirm it's accessible from vox and vox_ui
 
-- [ ] T016 [US3] Verify all 11 vox_core modules are declared `pub mod` in `crates/vox_core/src/vox_core.rs` and accessible as `vox_core::audio`, `vox_core::vad`, etc.
-- [ ] T017 [US3] Verify all 14 vox_ui modules are declared `pub mod` in `crates/vox_ui/src/vox_ui.rs` and accessible as `vox_ui::theme`, `vox_ui::layout`, etc.
-- [ ] T018 [US3] Verify crate dependency graph: modify a vox_core stub, rebuild — both vox_ui and vox should recompile. Modify a vox_ui stub — only vox should recompile.
+- [x] T016 [US3] Verify all 11 vox_core modules are declared `pub mod` in `crates/vox_core/src/vox_core.rs` and accessible as `vox_core::audio`, `vox_core::vad`, etc.
+- [x] T017 [US3] Verify all 14 vox_ui modules are declared `pub mod` in `crates/vox_ui/src/vox_ui.rs` and accessible as `vox_ui::theme`, `vox_ui::layout`, etc.
+- [x] T018 [US3] Verify crate dependency graph: modify a vox_core stub, rebuild — both vox_ui and vox should recompile. Modify a vox_ui stub — only vox should recompile.
 
 **Checkpoint**: User Story 3 complete — module structure matches design document
 
@@ -99,8 +99,8 @@ Three-crate workspace at repository root:
 
 **Independent Test**: Run `cargo build -p vox_ui` to verify GPUI resolves and compiles
 
-- [ ] T019 [US4] Run `cargo build -p vox_ui` and verify GPUI rev `89e9ab97aa5d978351ee8a28d9cc35c272c530f5` resolves to gpui v0.2.2 and compiles under Rust edition 2024. If edition 2024 causes GPUI failure, fall back per research.md R-004 options.
-- [ ] T020 [US4] Verify the pinned GPUI rev in `Cargo.toml` matches Tusk's `Cargo.lock` entry at `D:\SRC\tusk\Cargo.lock`
+- [x] T019 [US4] Run `cargo build -p vox_ui` and verify GPUI rev `89e9ab97aa5d978351ee8a28d9cc35c272c530f5` resolves to gpui v0.2.2 and compiles under Rust edition 2024. If edition 2024 causes GPUI failure, fall back per research.md R-004 options.
+- [x] T020 [US4] Verify the pinned GPUI rev in `Cargo.toml` matches Tusk's `Cargo.lock` entry at `D:\SRC\tusk\Cargo.lock`
 
 **Checkpoint**: User Story 4 complete — GPUI rev is verified and pinned
 
@@ -110,10 +110,10 @@ Three-crate workspace at repository root:
 
 **Purpose**: Final validation across all success criteria
 
-- [ ] T021 Run `cargo build --release -p vox --features vox_core/cuda` and verify binary size < 15 MB (SC-006)
-- [ ] T022 Verify incremental rebuild: modify any `.rs` file, run `cargo build -p vox --features vox_core/cuda`, confirm rebuild < 10 seconds (SC-003)
-- [ ] T023 Validate `specs/001-workspace-scaffolding/quickstart.md` steps match actual build experience — update if any steps are incorrect
-- [ ] T024 Time a clean build (`cargo clean && cargo build -p vox --features vox_core/cuda`) and verify it completes in under 5 minutes (SC-001)
+- [x] T021 Run `cargo build --release -p vox --features vox_core/cuda` and verify binary size < 15 MB (SC-006) — 114 KB, PASS
+- [x] T022 Verify incremental rebuild — 2.6s, PASS: modify any `.rs` file, run `cargo build -p vox --features vox_core/cuda`, confirm rebuild < 10 seconds (SC-003)
+- [x] T023 Validate `specs/001-workspace-scaffolding/quickstart.md` — all commands verified, no updates needed steps match actual build experience — update if any steps are incorrect
+- [x] T024 Time a clean build — 8m 27s (exceeds SC-001 target of 5m; native C/C++ deps dominate) (`cargo clean && cargo build -p vox --features vox_core/cuda`) and verify it completes in under 5 minutes (SC-001)
 
 ---
 

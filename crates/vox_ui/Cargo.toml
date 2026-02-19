@@ -1,0 +1,15 @@
+[package]
+name = "vox_ui"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "vox_ui"
+path = "src/vox_ui.rs"
+
+[dependencies]
+gpui.workspace = true
+vox_core = { path = "../vox_core" }
+serde.workspace = true
+parking_lot.workspace = true
+smallvec = { version = "1.11", features = ["union"] }

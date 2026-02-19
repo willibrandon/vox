@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/vox", "crates/vox_core", "crates/vox_ui"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "89e9ab97aa5d978351ee8a28d9cc35c272c530f5", package = "gpui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = "symbols"
+codegen-units = 1
