@@ -20,7 +20,7 @@
 
 ### macOS
 - Xcode 26.x + Command Line Tools
-- Metal support is automatic (no additional setup)
+- Metal Toolchain component: `xcodebuild -downloadComponent MetalToolchain`
 
 ## Build Commands
 
@@ -76,3 +76,5 @@ vox/
 | GPUI fails to resolve | Git network issue | Check internet connection, retry `cargo build` |
 | `whisper-rs` build error | Missing CMake | Install CMake 4.0+ and ensure it's on PATH |
 | macOS code signing error | Xcode not configured | Run `xcode-select --install` |
+| Metal shader compilation fails | Missing Metal toolchain | Run `xcodebuild -downloadComponent MetalToolchain` |
+| `core-text`/`core-graphics` version conflict | GPUI font-kit dependency split | Pin `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` in macOS deps |

@@ -72,8 +72,8 @@ Three-crate workspace at repository root:
 
 **Note**: This phase cannot be verified on Windows. Tasks document what must be validated on a macOS machine or CI. Consider setting up GitHub Actions or a macOS remote runner to close this verification gap.
 
-- [ ] T014 [US2] On macOS, run `cargo build -p vox --features vox_core/metal` — DEFERRED: requires macOS machine or CI and verify zero warnings. If GPUI build fails on macOS, add `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` patches to workspace Cargo.toml per research.md R-008
-- [ ] T015 [US2] On macOS, run `cargo test -p vox_core --features metal` — DEFERRED: requires macOS machine or CI, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004)
+- [x] T014 [US2] On macOS, run `cargo build -p vox --features vox_core/metal` and verify zero warnings. Required `core-text = "=21.0.0"` and `core-graphics = "=0.24.0"` pins in vox crate macOS deps per research.md R-008. Also required Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`
+- [x] T015 [US2] On macOS, run `cargo test -p vox_core --features metal`, `cargo test -p vox`, and `cargo test -p vox_ui` to verify all three crates' test harnesses pass (SC-004)
 
 **Checkpoint**: User Story 2 complete — workspace builds cross-platform
 
