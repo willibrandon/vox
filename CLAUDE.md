@@ -12,7 +12,7 @@ Design document: `docs/design.md`. Constitution: `.specify/memory/constitution.m
 
 ## Constitution (All Principles Are Non-Negotiable)
 
-Every change must comply with these 6 principles. Violations are rejected.
+Every change must comply with these 7 principles. Violations are rejected.
 
 1. **Local-Only Processing** — All audio/ML processing on-device. No network calls except model download. No telemetry. SHA-256 checksum verification on downloaded models.
 2. **Real-Time Latency Budget** — End-to-end < 300ms (RTX 4090), < 750ms (M4 Pro). No blocking on audio callback thread. ML inference on processing/GPU threads only.
@@ -20,6 +20,7 @@ Every change must comply with these 6 principles. Violations are rejected.
 4. **Pure Rust / GPUI — No Web Tech** — No JavaScript, TypeScript, HTML, CSS, WebView, Node.js. Single static binary. UI calls Rust functions directly, no IPC serialization.
 5. **Zero-Click First Launch** — Models auto-download concurrently on first launch. No setup wizards, no confirmation dialogs. Hotkey responds in every app state.
 6. **Scope Only Increases** — No feature may be removed, deferred, made optional, deprioritized, or marked as a future version goal. Only scope increases are permitted. If it's in the design doc, it gets implemented.
+7. **Public API Documentation** — Every `pub` item (structs, enums, traits, functions, methods, type aliases, constants, modules) MUST have `///` doc comments. Describe what and why, not the type signature.
 
 ## Performance Budgets (Binding)
 
@@ -88,6 +89,8 @@ These are verified compatible. Using wrong versions will cause compile failures 
 | cpal | 0.17 | `SampleRate` is `u32`. `device.description()` returns `DeviceDescription` struct — use `.name()`. Auto RT priority. |
 | ringbuf | 0.4 | `occupied_len()` on `Observer` trait — must `use ringbuf::traits::Observer` |
 | rubato | 1.0 | Major API redesign from 0.16. Use `AudioAdapter` trait + `SequentialSliceOfVecs` |
+| audioadapter | 2.0 | **NOT 0.2** — must match rubato 1.0's transitive dep. Wrong version compiles but causes trait mismatch at use site. |
+| audioadapter-buffers | 2.0 | Needs `features = ["std"]`. Provides `SequentialSliceOfVecs` for rubato's adapter API. |
 | ort | 2.0.0-rc.11 | RC but production-ready |
 | whisper-rs | 0.15.1 | crates.io (source code on Codeberg). Flash attn disabled. `full_n_segments()` returns `c_int` not Result |
 | llama-cpp-2 | 0.1 (utilityai) | **NOT `llama-cpp-rs` 0.4** — completely different crate. Types nested: `model::LlamaModel`. `load_from_file` needs `&LlamaBackend` first arg |
@@ -110,11 +113,12 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 
 ## Spec-Kit Workflow
 
-Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 6 principles before implementation begins.
+Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 7 principles before implementation begins.
 
 # Rust coding guidelines
 
 * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
+* Every `pub` item MUST have a `///` doc comment. Modules MUST have `//!` module-level docs. Describe what the item does and why a caller would use it — do not restate the type signature. Omit only on trait impls where the trait's own docs suffice.
 * Do not write organizational or comments that summarize the code. Comments should only be written in order to explain "why" the code is written in some way in the case there is a reason that is tricky / non-obvious.
 * Prefer implementing functionality in existing files unless it is a new logical component. Avoid creating many small files.
 * Avoid using functions that panic like `unwrap()`, instead use mechanisms like `?` to propagate errors.

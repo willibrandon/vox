@@ -17,7 +17,7 @@ Additionally:
 This feature adds two new crates to `crates/vox_core/Cargo.toml`:
 
 ```toml
-audioadapter = "0.2"
+audioadapter = "2.0"
 audioadapter-buffers = { version = "2.0", features = ["std"] }
 ```
 
@@ -92,7 +92,7 @@ crates/vox_core/src/
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `audioadapter` not found | Missing dependency | Add `audioadapter = "0.2"` to vox_core Cargo.toml |
+| `audioadapter` not found | Missing dependency | Add `audioadapter = "2.0"` to vox_core Cargo.toml |
 | No audio devices found | No microphone connected | Connect a microphone or enable virtual audio device |
 | Ring buffer tests hang | Deadlock in test | Ensure producer/consumer are on separate threads, not blocking |
 | Resampler chunk size error | Input buffer too small | Ensure input length >= resampler chunk_size (1024 frames) |

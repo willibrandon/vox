@@ -7362,6 +7362,8 @@ name = "vox_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "audioadapter",
+ "audioadapter-buffers",
  "cpal",
  "global-hotkey",
  "llama-cpp-2",

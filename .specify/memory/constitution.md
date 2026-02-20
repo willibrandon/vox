@@ -1,32 +1,33 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.1.0 → 1.2.0 (MINOR — new section added)
+  Version change: 1.2.0 → 1.3.0 (MINOR — new principle added)
 
   Modified principles: None
 
   Added sections:
-    - Reference Repositories (Zed and Tusk as local references)
+    - Principle VII: Public API Documentation
 
   Removed sections: None
 
   Templates requiring updates:
     ✅ plan-template.md — no changes needed; generic Constitution
-        Check covers new section implicitly
+        Check covers new principle implicitly
     ✅ spec-template.md — compatible; no changes needed
     ✅ tasks-template.md — compatible; no changes needed
     ✅ agent-file-template.md — compatible; no changes needed
     ✅ checklist-template.md — compatible; no changes needed
 
   Companion updates:
-    ✅ CLAUDE.md — Reference Repositories section added
+    ✅ CLAUDE.md — Rust coding guidelines updated with doc comment rule
+    ✅ CLAUDE.md — Constitution list updated to mention Principle VII
 
   Deferred items: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.2.0
+**Version**: 1.3.0
 **Ratified**: 2026-02-19
 **Last Amended**: 2026-02-19
 
@@ -86,6 +87,17 @@ implemented — not stubbed, not skipped, not replaced with a simpler
 alternative. This applies to all artifacts: design documents, feature
 specs, implementation plans, and task lists. Any proposal that
 reduces scope relative to what has been defined is rejected.
+
+### VII. Public API Documentation
+
+Every public item in the codebase MUST have a Rust-idiomatic doc
+comment (`///`). This applies to all `pub` structs, enums, traits,
+functions, methods, type aliases, constants, and modules (`//!`
+for module-level docs). Doc comments MUST describe what the item
+does and why a caller would use it — not restate the type signature.
+Omit doc comments only on trait implementations where the trait's
+own documentation is sufficient. `#[allow(missing_docs)]` is
+forbidden without a justifying comment approved in code review.
 
 ## Performance & Resource Constraints
 
@@ -158,6 +170,7 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle IV: No web dependencies introduced.
 - Principle V: No manual setup steps added to first launch.
 - Principle VI: No features removed, deferred, or made optional.
+- Principle VII: All public items have doc comments.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.

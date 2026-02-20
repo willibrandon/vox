@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms with all module stubs in place. No application logic yet.
+Early development. The three-crate workspace compiles on both platforms. Audio capture pipeline is implemented and tested (cpal capture, lock-free ring buffer, rubato resampler, device enumeration).
 
 ## Prerequisites
 
