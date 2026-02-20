@@ -153,14 +153,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_asr_model_loads() {
         let engine = AsrEngine::new(&model_path(), true);
         assert!(engine.is_ok(), "model should load: {:?}", engine.err());
     }
 
     #[test]
-    #[ignore]
     fn test_asr_transcribe_speech() {
         let engine = AsrEngine::new(&model_path(), true).expect("model should load");
         let samples = load_speech_samples();
@@ -169,7 +167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_asr_empty_audio() {
         let engine = AsrEngine::new(&model_path(), true).expect("model should load");
         let text = engine.transcribe(&[]).expect("empty audio should not error");
@@ -177,7 +174,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_asr_silent_audio() {
         let engine = AsrEngine::new(&model_path(), true).expect("model should load");
         let silence = vec![0.0f32; 16000];
@@ -186,7 +182,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_asr_short_segment() {
         let engine = AsrEngine::new(&model_path(), true).expect("model should load");
         let samples = load_speech_samples();
@@ -208,7 +203,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_asr_sequential() {
         let engine = AsrEngine::new(&model_path(), true).expect("model should load");
         let samples = load_speech_samples();

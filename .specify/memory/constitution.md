@@ -1,12 +1,12 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.2.0 → 1.3.0 (MINOR — new principle added)
+  Version change: 1.4.0 → 1.5.0 (MINOR — new principle added)
 
   Modified principles: None
 
   Added sections:
-    - Principle VII: Public API Documentation
+    - Principle IX: Explicit Commit Only
 
   Removed sections: None
 
@@ -19,17 +19,16 @@
     ✅ checklist-template.md — compatible; no changes needed
 
   Companion updates:
-    ✅ CLAUDE.md — Rust coding guidelines updated with doc comment rule
-    ✅ CLAUDE.md — Constitution list updated to mention Principle VII
+    ⚠ CLAUDE.md — Constitution list must be updated to 9 principles
 
   Deferred items: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.3.0
+**Version**: 1.5.0
 **Ratified**: 2026-02-19
-**Last Amended**: 2026-02-19
+**Last Amended**: 2026-02-20
 
 ## Core Principles
 
@@ -98,6 +97,33 @@ does and why a caller would use it — not restate the type signature.
 Omit doc comments only on trait implementations where the trait's
 own documentation is sufficient. `#[allow(missing_docs)]` is
 forbidden without a justifying comment approved in code review.
+
+### VIII. No Test Skipping (NON-NEGOTIABLE)
+
+Every test in the codebase MUST run unconditionally on every
+`cargo test` invocation. The `#[ignore]` attribute, `#[cfg(skip)]`
+guards, conditional compilation to disable tests, and any other
+mechanism that prevents a test from executing are absolutely
+forbidden. No test guards of any kind are permitted. If a test
+requires external resources (model files, hardware, fixtures),
+those resources MUST be present in the development environment.
+If a test fails, it MUST be fixed — not skipped, not guarded,
+not deferred, not commented out. Any test that exists in the
+codebase MUST pass on every test run. Violations of this
+principle result in immediate project reset.
+
+### IX. Explicit Commit Only (NON-NEGOTIABLE)
+
+Git commits MUST only be created when the user explicitly
+instructs Claude to commit. Claude MUST NEVER create a git
+commit, amend a commit, or run any git command that modifies
+repository history on its own initiative. Staging files (`git add`)
+for inspection is permitted, but `git commit` MUST NOT execute
+without a direct, unambiguous instruction from the user. This
+applies regardless of task completion state — finishing an
+implementation does not imply permission to commit. Violations
+of this principle are treated as unauthorized repository
+modifications.
 
 ## Performance & Resource Constraints
 
@@ -171,6 +197,8 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle V: No manual setup steps added to first launch.
 - Principle VI: No features removed, deferred, or made optional.
 - Principle VII: All public items have doc comments.
+- Principle VIII: No tests skipped, ignored, or guarded.
+- Principle IX: No commits without explicit user instruction.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.

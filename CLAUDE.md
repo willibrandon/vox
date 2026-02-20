@@ -12,7 +12,7 @@ Design document: `docs/design.md`. Constitution: `.specify/memory/constitution.m
 
 ## Constitution (All Principles Are Non-Negotiable)
 
-Every change must comply with these 7 principles. Violations are rejected.
+Every change must comply with these 9 principles. Violations are rejected.
 
 1. **Local-Only Processing** — All audio/ML processing on-device. No network calls except model download. No telemetry. SHA-256 checksum verification on downloaded models.
 2. **Real-Time Latency Budget** — End-to-end < 300ms (RTX 4090), < 750ms (M4 Pro). No blocking on audio callback thread. ML inference on processing/GPU threads only.
@@ -21,6 +21,8 @@ Every change must comply with these 7 principles. Violations are rejected.
 5. **Zero-Click First Launch** — Models auto-download concurrently on first launch. No setup wizards, no confirmation dialogs. Hotkey responds in every app state.
 6. **Scope Only Increases** — No feature may be removed, deferred, made optional, deprioritized, or marked as a future version goal. Only scope increases are permitted. If it's in the design doc, it gets implemented.
 7. **Public API Documentation** — Every `pub` item (structs, enums, traits, functions, methods, type aliases, constants, modules) MUST have `///` doc comments. Describe what and why, not the type signature.
+8. **No Test Skipping** — Every test MUST run unconditionally. `#[ignore]`, `#[cfg(skip)]`, conditional compilation to disable tests, and any other skip mechanism are forbidden. Tests that fail MUST be fixed, not skipped.
+9. **Explicit Commit Only** — Git commits MUST only be created when the user explicitly instructs it. Never commit on own initiative. Finishing a task does not imply permission to commit.
 
 ## Performance Budgets (Binding)
 
@@ -114,7 +116,7 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 
 ## Spec-Kit Workflow
 
-Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 7 principles before implementation begins.
+Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 9 principles before implementation begins.
 
 # Rust coding guidelines
 

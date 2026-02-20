@@ -8,7 +8,12 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "89e9ab97aa5d978351ee8a28d9cc35c272c530f5", package = "gpui" }
+# inspector feature required: our [profile.dev.build-override] sets
+# debug-assertions = false, which compiles gpui_macros without
+# debug_assertions. Without the feature, derive_inspector_reflection
+# is compiled out of gpui_macros while gpui's styled.rs still expects
+# it (library code retains debug_assertions = true from dev profile).
+gpui = { git = "https://github.com/zed-industries/zed", rev = "89e9ab97aa5d978351ee8a28d9cc35c272c530f5", package = "gpui", features = ["inspector"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros"] }
@@ -17,6 +22,28 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# whisper-rs-sys and llama-cpp-sys-2 both statically bundle ggml with
+# CUDA. Without LTO the linker picks one copy's symbols arbitrarily,
+# causing ABI mismatch crashes (STATUS_STACK_BUFFER_OVERRUN). Full LTO
+# resolves duplicate ggml symbols correctly at link time.
+[profile.dev]
+lto = true
+
+# whisper-rs-sys's build.rs uses cfg!(debug_assertions) to switch between
+# RelWithDebInfo (debug) and Release (release) cmake builds. The cmake-rs
+# crate on Windows/MSVC has a known bug (rust-lang/cmake-rs#240) where
+# debug-mode builds strip optimization flags. llama-cpp-sys-2 works around
+# this by injecting /O2 manually, but whisper-rs-sys does not. This causes
+# whisper's ggml to compile at /Od while llama's compiles at /O2, producing
+# ABI-incompatible duplicate ggml symbols that crash with
+# STATUS_STACK_BUFFER_OVERRUN when cross-resolved by the linker.
+#
+# Setting debug-assertions = false in build-override makes whisper-rs-sys
+# build in pure Release mode (matching llama-cpp-sys-2), eliminating the
+# ABI mismatch.
+[profile.dev.build-override]
+debug-assertions = false
 
 [profile.release]
 opt-level = "s"

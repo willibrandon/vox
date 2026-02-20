@@ -7371,6 +7371,7 @@ dependencies = [
  "audioadapter",
  "audioadapter-buffers",
  "cpal",
+ "encoding_rs",
  "global-hotkey",
  "hound",
  "llama-cpp-2",

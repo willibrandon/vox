@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms. Audio capture and voice activity detection are implemented and tested (cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, streaming state machine, speech chunker with context padding).
+Early development. The three-crate workspace compiles on both platforms. Audio capture, voice activity detection, speech recognition, and LLM post-processing are implemented and tested (60 tests, 0 ignored). Specifically: cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, Whisper Large V3 Turbo ASR via whisper.cpp, and Qwen 2.5 3B Instruct post-processor via llama.cpp (filler removal, punctuation, course correction, number/date/email formatting, voice command detection, tone adaptation, token streaming).
 
 ## Prerequisites
 
