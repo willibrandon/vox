@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms. Audio capture pipeline is implemented and tested (cpal capture, lock-free ring buffer, rubato resampler, device enumeration).
+Early development. The three-crate workspace compiles on both platforms. Audio capture and voice activity detection are implemented and tested (cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, streaming state machine, speech chunker with context padding).
 
 ## Prerequisites
 

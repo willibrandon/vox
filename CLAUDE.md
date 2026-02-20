@@ -91,7 +91,7 @@ These are verified compatible. Using wrong versions will cause compile failures 
 | rubato | 1.0 | Major API redesign from 0.16. Use `AudioAdapter` trait + `SequentialSliceOfVecs` |
 | audioadapter | 2.0 | **NOT 0.2** — must match rubato 1.0's transitive dep. Wrong version compiles but causes trait mismatch at use site. |
 | audioadapter-buffers | 2.0 | Needs `features = ["std"]`. Provides `SequentialSliceOfVecs` for rubato's adapter API. |
-| ort | 2.0.0-rc.11 | RC but production-ready |
+| ort | 2.0.0-rc.11 | `load-dynamic` feature disables build script — `download-binaries`/`copy-dylibs` do nothing. DLL in `vendor/onnxruntime/`, path set via `.cargo/config.toml` `[env]`. Requires ONNX Runtime >= 1.23.x. Silero VAD v5 needs 64-sample audio context prepended to each 512-sample window (576 total input) — without it, model returns near-zero for all audio. Tensor names: `input`/`state`/`sr` → `output`/`stateN`. `try_extract_tensor::<f32>()` returns `(&Shape, &[f32])` tuple. `session.inputs()`/`outputs()` are methods returning `&[Outlet]`, `Outlet::name()` is a method. |
 | whisper-rs | 0.15.1 | crates.io (source code on Codeberg). Flash attn disabled. `full_n_segments()` returns `c_int` not Result |
 | llama-cpp-2 | 0.1 (utilityai) | **NOT `llama-cpp-rs` 0.4** — completely different crate. Types nested: `model::LlamaModel`. `load_from_file` needs `&LlamaBackend` first arg |
 | windows | 0.62 | Win32 SendInput. Can't inject into elevated processes (UIPI) |
@@ -104,6 +104,7 @@ These are verified compatible. Using wrong versions will cause compile failures 
 
 - `WhisperContext` is **NOT** thread-safe → wrap in `Arc<Mutex<>>`. Create new `WhisperState` per transcription.
 - `LlamaModel` is `Send+Sync` → `Arc`. `LlamaContext` is **NOT** → one per inference call.
+- `SileroVad` is **NOT** `Send`/`Sync` (holds ort `Session`) → use on a single processing thread only.
 - cpal audio callback is real-time — no allocations, no locks, no ML. Resampling on processing thread.
 - macOS `CGEvent` has undocumented 20-char limit per call — must chunk text.
 
