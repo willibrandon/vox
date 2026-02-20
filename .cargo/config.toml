@@ -1,0 +1,5 @@
+[env]
+# ONNX Runtime dynamic library path for ort crate (load-dynamic feature).
+# The DLL is stored in vendor/onnxruntime/ outside of target/ so it survives cargo clean.
+# Platform-specific: update this path when adding macOS/Linux support.
+ORT_DYLIB_PATH = { value = "vendor/onnxruntime/onnxruntime.dll", relative = true }

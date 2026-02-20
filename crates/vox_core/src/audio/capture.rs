@@ -294,7 +294,6 @@ mod tests {
     use ringbuf::traits::Consumer;
 
     #[test]
-    #[ignore] // Requires microphone hardware
     fn test_capture_to_buffer() {
         let config = AudioConfig::default();
         let mut capture = AudioCapture::new(&config).expect("failed to create capture");
@@ -310,7 +309,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires microphone hardware
     fn test_capture_stop_clean() {
         let handle = std::thread::spawn(|| {
             let config = AudioConfig::default();
@@ -342,7 +340,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires audio hardware
     fn test_device_enumeration() {
         let devices = list_input_devices().expect("failed to enumerate devices");
         assert!(!devices.is_empty(), "expected at least one input device");
