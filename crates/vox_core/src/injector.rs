@@ -96,6 +96,32 @@ pub fn inject_text(text: &str) -> InjectionResult {
     }
 }
 
+/// Get the name of the currently focused application.
+///
+/// Returns the executable/application name (not the window title):
+/// - Windows: Process executable stem (e.g., "notepad", "Code")
+/// - macOS: Application localized name (e.g., "Safari", "Visual Studio Code")
+///
+/// Returns "Unknown" if detection fails for any reason (no focused window,
+/// API error, elevated process). This is non-fatal — the LLM uses app name
+/// for tone hints, not critical logic.
+pub fn get_focused_app_name() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        windows::get_focused_app_name_impl()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::get_focused_app_name_impl()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        "Unknown".to_string()
+    }
+}
+
 /// Execute a voice command by simulating the mapped keyboard shortcut.
 ///
 /// Maps the command name to platform-appropriate key sequences and sends them

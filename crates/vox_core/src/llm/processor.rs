@@ -20,7 +20,8 @@ use llama_cpp_2::token::LlamaToken;
 use parking_lot::Mutex;
 
 use super::prompts::{
-    build_user_message, build_user_message_with_command_emphasis, detect_wake_word, SYSTEM_PROMPT,
+    build_user_message, build_user_message_with_command_emphasis, detect_wake_word,
+    is_likely_command, SYSTEM_PROMPT,
 };
 
 /// Maximum number of tokens the LLM can generate per call.
@@ -33,6 +34,12 @@ const CONTEXT_WINDOW: u32 = 2048;
 /// once per process — this ensures it's initialized exactly once and shared.
 /// Uses `Mutex<Option<...>>` because `OnceLock::get_or_try_init` is unstable.
 static LLAMA_BACKEND: Mutex<Option<Arc<LlamaBackend>>> = Mutex::new(None);
+
+/// Cached loaded model. Loading the same GGUF file multiple times wastes GPU
+/// memory (~2.2 GB per load for Qwen 3B). Since `LlamaModel` is `Send + Sync`,
+/// we cache the first successful load and share it via `Arc`. Keyed by the
+/// canonical path to detect reloads of the same file.
+static MODEL_CACHE: Mutex<Option<(std::path::PathBuf, Arc<LlamaModel>)>> = Mutex::new(None);
 
 /// The LLM post-processing engine. Takes raw speech-to-text output and produces
 /// polished text or structured voice commands.
@@ -103,18 +110,43 @@ impl PostProcessor {
             }
         };
 
-        let model_params = if use_gpu {
-            LlamaModelParams::default().with_n_gpu_layers(u32::MAX)
-        } else {
-            LlamaModelParams::default()
-        };
-
         if !model_path.exists() {
             anyhow::bail!("failed to load model from {}: file not found", model_path.display());
         }
 
-        let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
-            .map_err(|e| anyhow::anyhow!("failed to load model from {}: {e}", model_path.display()))?;
+        let canonical = model_path.canonicalize().unwrap_or_else(|_| model_path.to_path_buf());
+
+        let model = {
+            let mut cache = MODEL_CACHE.lock();
+            if let Some((ref cached_path, ref cached_model)) = *cache {
+                if *cached_path == canonical {
+                    Arc::clone(cached_model)
+                } else {
+                    // Different model path — load and replace cache
+                    let model_params = if use_gpu {
+                        LlamaModelParams::default().with_n_gpu_layers(u32::MAX)
+                    } else {
+                        LlamaModelParams::default()
+                    };
+                    let loaded = LlamaModel::load_from_file(&backend, model_path, &model_params)
+                        .map_err(|e| anyhow::anyhow!("failed to load model from {}: {e}", model_path.display()))?;
+                    let arc = Arc::new(loaded);
+                    *cache = Some((canonical, Arc::clone(&arc)));
+                    arc
+                }
+            } else {
+                let model_params = if use_gpu {
+                    LlamaModelParams::default().with_n_gpu_layers(u32::MAX)
+                } else {
+                    LlamaModelParams::default()
+                };
+                let loaded = LlamaModel::load_from_file(&backend, model_path, &model_params)
+                    .map_err(|e| anyhow::anyhow!("failed to load model from {}: {e}", model_path.display()))?;
+                let arc = Arc::new(loaded);
+                *cache = Some((canonical, Arc::clone(&arc)));
+                arc
+            }
+        };
 
         let chat_template = model
             .chat_template(None)
@@ -133,7 +165,7 @@ impl PostProcessor {
 
         Ok(Self {
             backend,
-            model: Arc::new(model),
+            model,
             system_prompt_tokens: Arc::new(system_prompt_tokens),
             chat_template: Arc::new(chat_template),
         })
@@ -256,7 +288,11 @@ impl PostProcessor {
 
         let prompt_tokens = self.build_prompt_tokens(raw_text, dictionary_hints, active_app)?;
         let output = self.run_inference(&prompt_tokens)?;
-        Ok(parse_output(&output))
+
+        // Use the text the LLM actually saw for validation — if a wake word was
+        // stripped, validate against the remainder, not the original input.
+        let effective_text = detect_wake_word(raw_text).unwrap_or(raw_text);
+        Ok(validate_command_output(parse_output(&output), effective_text))
     }
 
     /// Process a raw transcript with streaming token output.
@@ -365,7 +401,32 @@ impl PostProcessor {
             n_cur += 1;
         }
 
-        Ok(parse_output(&output))
+        // Use the text the LLM actually saw for validation — if a wake word was
+        // stripped, validate against the remainder, not the original input.
+        let effective_text = detect_wake_word(raw_text).unwrap_or(raw_text);
+        Ok(validate_command_output(parse_output(&output), effective_text))
+    }
+}
+
+/// Guard against LLM command misclassification.
+///
+/// Small models sometimes return JSON commands for ordinary dictation text.
+/// This validates that the raw transcript plausibly matches a known voice
+/// command phrase. If not, the Command output is treated as a misclassification
+/// and the raw transcript is returned as Text instead.
+fn validate_command_output(output: ProcessorOutput, raw_text: &str) -> ProcessorOutput {
+    match output {
+        ProcessorOutput::Command(ref _cmd) => {
+            if is_likely_command(raw_text) {
+                output
+            } else {
+                // LLM misclassified — the raw text isn't a command phrase.
+                // Fall back to the raw transcript since the LLM's output was
+                // JSON, not usable polished text.
+                ProcessorOutput::Text(raw_text.trim().to_string())
+            }
+        }
+        text => text,
     }
 }
 
@@ -489,6 +550,58 @@ mod tests {
         assert_eq!(detect_wake_word("hey vox do something"), Some("do something"));
         // "hey vox" alone at end should match with empty remainder
         assert_eq!(detect_wake_word("hey vox"), Some(""));
+    }
+
+    // --- Command validation tests ---
+
+    #[test]
+    fn test_is_likely_command_known_phrases() {
+        use super::super::prompts::is_likely_command;
+        assert!(is_likely_command("delete that"));
+        assert!(is_likely_command("undo that"));
+        assert!(is_likely_command("new line"));
+        assert!(is_likely_command("select all"));
+        assert!(is_likely_command("paste"));
+        assert!(is_likely_command("tab"));
+    }
+
+    #[test]
+    fn test_is_likely_command_case_insensitive() {
+        use super::super::prompts::is_likely_command;
+        assert!(is_likely_command("Delete That"));
+        assert!(is_likely_command("NEW LINE"));
+    }
+
+    #[test]
+    fn test_is_likely_command_with_filler() {
+        use super::super::prompts::is_likely_command;
+        assert!(is_likely_command("um delete that"));
+        assert!(is_likely_command("uh paste"));
+    }
+
+    #[test]
+    fn test_is_likely_command_rejects_normal_text() {
+        use super::super::prompts::is_likely_command;
+        assert!(!is_likely_command("Donald Trump has been"));
+        assert!(!is_likely_command("hello world"));
+        assert!(!is_likely_command("please delete the file from the server"));
+    }
+
+    #[test]
+    fn test_validate_command_output_allows_real_commands() {
+        let output = parse_output(r#"{"cmd":"delete_last"}"#);
+        let validated = validate_command_output(output, "delete that");
+        assert!(matches!(validated, ProcessorOutput::Command(_)));
+    }
+
+    #[test]
+    fn test_validate_command_output_blocks_misclassification() {
+        let output = parse_output(r#"{"cmd":"delete_last"}"#);
+        let validated = validate_command_output(output, "Donald Trump has been");
+        match validated {
+            ProcessorOutput::Text(t) => assert_eq!(t, "Donald Trump has been"),
+            ProcessorOutput::Command(_) => panic!("should have blocked misclassification"),
+        }
     }
 
     // --- T011: Integration tests (require model file) ---

@@ -250,6 +250,55 @@ pub(super) fn send_key(key: VIRTUAL_KEY) -> Result<()> {
     Ok(())
 }
 
+/// Get the name of the currently focused application on Windows.
+///
+/// Flow: GetForegroundWindow → GetWindowThreadProcessId → OpenProcess →
+/// QueryFullProcessImageNameW → extract filename stem. Returns "Unknown"
+/// on any failure.
+pub(super) fn get_focused_app_name_impl() -> String {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd == HWND::default() {
+            return "Unknown".to_string();
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return "Unknown".to_string();
+        }
+
+        let process_handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => handle,
+            Err(_) => return "Unknown".to_string(),
+        };
+
+        let mut buf = [0u16; 260]; // MAX_PATH
+        let mut size = buf.len() as u32;
+
+        let result = windows::Win32::System::Threading::QueryFullProcessImageNameW(
+            process_handle,
+            windows::Win32::System::Threading::PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        );
+
+        let _ = CloseHandle(process_handle);
+
+        if result.is_err() {
+            return "Unknown".to_string();
+        }
+
+        let path = String::from_utf16_lossy(&buf[..size as usize]);
+        // Extract filename stem: "C:\...\notepad.exe" → "notepad"
+        std::path::Path::new(&path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

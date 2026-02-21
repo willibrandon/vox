@@ -284,18 +284,18 @@ pub fn run_vad_loop(
             let segment = chunker.feed(&window, event.as_ref());
 
             if let Some(segment) = segment {
-                if let Err(error) = segment_tx.try_send(segment) {
-                    tracing::warn!("Failed to send speech segment: {error}");
-                }
+                // blocking_send blocks the VAD thread until channel has space,
+                // guaranteeing no segment drops under backpressure (FR-017).
+                // The .ok() discards the SendError that only occurs if the
+                // receiver is dropped (normal shutdown).
+                segment_tx.blocking_send(segment).ok();
             }
         }
     }
 
     // Flush any remaining audio on stop
     if let Some(segment) = chunker.flush() {
-        if let Err(error) = segment_tx.try_send(segment) {
-            tracing::warn!("Failed to send final segment on stop: {error}");
-        }
+        segment_tx.blocking_send(segment).ok();
     }
 
     Ok(())
@@ -448,17 +448,26 @@ mod tests {
         let model_path = fixture_dir.join("silero_vad_v5.onnx");
         let wav_path = fixture_dir.join("speech_sample.wav");
 
-        // Load speech audio
+        // Load speech audio, truncated to 3 seconds (48000 samples at 16 kHz).
+        // The full WAV is ~169 seconds — using it all causes a deadlock because
+        // max_speech_ms force-segments produce more segments than the channel
+        // capacity, and blocking_send stalls the loop thread while the test
+        // waits on join().
         let mut reader =
             hound::WavReader::open(&wav_path).expect("Failed to open WAV");
         let speech_samples: Vec<f32> =
             if reader.spec().sample_format == hound::SampleFormat::Float {
-                reader.samples::<f32>().filter_map(|s| s.ok()).collect()
+                reader
+                    .samples::<f32>()
+                    .filter_map(|s| s.ok())
+                    .take(48000)
+                    .collect()
             } else {
                 reader
                     .samples::<i16>()
                     .filter_map(|s| s.ok())
                     .map(|s| s as f32 / 32768.0)
+                    .take(48000)
                     .collect()
             };
 
@@ -531,16 +540,23 @@ mod tests {
         let model_path = fixture_dir.join("silero_vad_v5.onnx");
         let wav_path = fixture_dir.join("speech_sample.wav");
 
+        // Truncate to 3 seconds per utterance to avoid channel deadlock
+        // (see test_vad_end_to_end comment for details)
         let mut reader =
             hound::WavReader::open(&wav_path).expect("Failed to open WAV");
         let speech_samples: Vec<f32> =
             if reader.spec().sample_format == hound::SampleFormat::Float {
-                reader.samples::<f32>().filter_map(|s| s.ok()).collect()
+                reader
+                    .samples::<f32>()
+                    .filter_map(|s| s.ok())
+                    .take(48000)
+                    .collect()
             } else {
                 reader
                     .samples::<i16>()
                     .filter_map(|s| s.ok())
                     .map(|s| s as f32 / 32768.0)
+                    .take(48000)
                     .collect()
             };
 

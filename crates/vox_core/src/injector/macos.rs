@@ -324,6 +324,43 @@ pub(super) fn send_key(keycode: CGKeyCode) -> Result<()> {
     Ok(())
 }
 
+/// Get the name of the currently focused application on macOS.
+///
+/// Uses `NSWorkspace.shared().frontmostApplication().localizedName()`.
+/// Returns "Unknown" on any failure (no frontmost app, nil name, etc.).
+#[cfg(target_os = "macos")]
+pub(super) fn get_focused_app_name_impl() -> String {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, NSObject};
+
+    unsafe {
+        let cls = match AnyClass::get(c"NSWorkspace") {
+            Some(c) => c,
+            None => return "Unknown".to_string(),
+        };
+        let workspace: *const AnyObject = msg_send![cls, sharedWorkspace];
+        if workspace.is_null() {
+            return "Unknown".to_string();
+        }
+        let app: *const AnyObject = msg_send![&*workspace, frontmostApplication];
+        if app.is_null() {
+            return "Unknown".to_string();
+        }
+        let name: *const NSObject = msg_send![&*app, localizedName];
+        if name.is_null() {
+            return "Unknown".to_string();
+        }
+        let utf8: *const std::ffi::c_char = msg_send![&*name, UTF8String];
+        if utf8.is_null() {
+            return "Unknown".to_string();
+        }
+        match std::ffi::CStr::from_ptr(utf8).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => "Unknown".to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

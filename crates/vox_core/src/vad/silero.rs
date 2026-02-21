@@ -13,6 +13,54 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor;
 
+/// Initialize the ONNX Runtime dynamic library for the current platform.
+///
+/// Locates the platform-specific DLL/dylib/so in the `vendor/onnxruntime/`
+/// directory (development) or next to the executable (production). Must be
+/// called before creating any `ort::session::Session`. Safe to call multiple
+/// times — the underlying `OnceLock` makes subsequent calls a no-op.
+fn init_ort_runtime() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    const ORT_LIB_NAME: &str = "onnxruntime.dll";
+    #[cfg(target_os = "macos")]
+    const ORT_LIB_NAME: &str = "libonnxruntime.dylib";
+    #[cfg(target_os = "linux")]
+    const ORT_LIB_NAME: &str = "libonnxruntime.so";
+
+    // Development: vendor directory relative to workspace root
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let vendor_path = manifest_dir
+        .join("../../vendor/onnxruntime")
+        .join(ORT_LIB_NAME);
+
+    if vendor_path.exists() {
+        ort::init_from(&vendor_path)
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", vendor_path.display()))?;
+        return Ok(());
+    }
+
+    // Production: next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let exe_path = exe_dir.join(ORT_LIB_NAME);
+            if exe_path.exists() {
+                ort::init_from(&exe_path)
+                    .map(|_| ())
+                    .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", exe_path.display()))?;
+                return Ok(());
+            }
+        }
+    }
+
+    bail!(
+        "ONNX Runtime library '{ORT_LIB_NAME}' not found. Checked:\n  \
+         - {}\n  \
+         - next to executable",
+        vendor_path.display()
+    );
+}
+
 /// Number of audio samples carried as context between consecutive inference calls.
 /// The Silero VAD v5 model expects each input to be prefixed with the trailing
 /// 64 samples from the previous call's input, providing raw audio overlap for
@@ -44,6 +92,8 @@ impl SileroVad {
     /// The model file is approximately 1.1 MB. Logs input/output tensor names
     /// on load for debugging.
     pub fn new(model_path: &Path) -> Result<Self> {
+        init_ort_runtime()?;
+
         let session = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(1)?

@@ -34,7 +34,7 @@ cargo test -p vox_core --features cuda
 cargo test -p vox_core --features metal
 
 # Single test with output
-cargo test -p vox_core test_pipeline_hello_world --features cuda -- --nocapture
+cargo test -p vox_core test_full_pipeline_hello_world --features cuda -- --nocapture
 ```
 
 ## Files Modified/Created by This Feature

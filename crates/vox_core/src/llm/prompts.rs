@@ -78,6 +78,44 @@ pub fn build_user_message_with_command_emphasis(
     )
 }
 
+/// Known voice command trigger phrases. Used to validate LLM command
+/// classification — if the raw transcript doesn't match any of these,
+/// the LLM's Command output is treated as a misclassification.
+const COMMAND_TRIGGERS: &[&str] = &[
+    "delete that",
+    "delete this",
+    "undo that",
+    "undo this",
+    "undo",
+    "new line",
+    "newline",
+    "new paragraph",
+    "select all",
+    "copy that",
+    "copy this",
+    "paste that",
+    "paste this",
+    "paste",
+    "tab",
+];
+
+/// Check whether the raw transcript plausibly matches a voice command.
+///
+/// Returns `true` if the transcript (case-insensitive, trimmed) matches one
+/// of the known command trigger phrases. Used as a guard against LLM
+/// misclassification — small models sometimes return JSON commands for
+/// ordinary dictation text.
+pub fn is_likely_command(raw_text: &str) -> bool {
+    let normalized = raw_text.trim().to_lowercase();
+    // Remove common filler words that might precede a command
+    let cleaned = normalized
+        .trim_start_matches("um ")
+        .trim_start_matches("uh ")
+        .trim_start_matches("like ")
+        .trim();
+    COMMAND_TRIGGERS.iter().any(|phrase| cleaned == *phrase)
+}
+
 /// Detect the "hey vox" wake word at the start of the transcript.
 ///
 /// Returns `Some(remaining_text)` with the prefix stripped if the wake word is

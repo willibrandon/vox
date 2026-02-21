@@ -85,6 +85,7 @@ pub struct AudioCapture {
     // Kept alive so the producer can be moved into the next stream's callback
     producer: Option<ringbuf::HeapProd<f32>>,
     channels: u16,
+    consumer_taken: bool,
 }
 
 impl AudioCapture {
@@ -140,6 +141,7 @@ impl AudioCapture {
             consumer,
             producer: Some(producer),
             channels,
+            consumer_taken: false,
         })
     }
 
@@ -209,6 +211,23 @@ impl AudioCapture {
         &mut self.consumer
     }
 
+    /// Take ownership of the ring buffer consumer for cross-thread use.
+    ///
+    /// Splits the consumer from the producer so it can be moved to the VAD
+    /// processing thread. Returns `None` if the consumer has already been
+    /// taken by a prior call. After taking, the `consumer()` method will
+    /// panic — use this method only when the consumer needs to be moved
+    /// to another thread (e.g., Pipeline::start).
+    pub fn take_consumer(&mut self) -> Option<HeapCons<f32>> {
+        if self.consumer_taken {
+            return None;
+        }
+        self.consumer_taken = true;
+        use ringbuf::traits::Split;
+        let (_, dummy_consumer) = ringbuf::HeapRb::<f32>::new(1).split();
+        Some(std::mem::replace(&mut self.consumer, dummy_consumer))
+    }
+
     /// Returns `true` if the device has been disconnected or the stream
     /// invalidated since capture started.
     pub fn is_disconnected(&self) -> bool {
@@ -272,6 +291,7 @@ impl AudioCapture {
         let (producer, consumer) = AudioRingBuffer::new(capacity);
         self.consumer = consumer;
         self.producer = Some(producer);
+        self.consumer_taken = false;
 
         self.native_sample_rate = new_rate;
         self.device = device;

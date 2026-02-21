@@ -5,9 +5,7 @@ rustflags = []
 rustflags = []
 
 [env]
-# ONNX Runtime dynamic library path for ort crate (load-dynamic feature).
-# The dylib is stored in vendor/onnxruntime/ outside of target/ so it survives cargo clean.
-# Platform-conditional: Cargo config [env] does not support per-target values,
-# so the build script or ORT_DYLIB_PATH env var must be set before building.
-# Default to macOS path here; Windows CI overrides via environment variable.
-ORT_DYLIB_PATH = { value = "vendor/onnxruntime/libonnxruntime.dylib", relative = true }
+# ONNX Runtime dynamic library is loaded programmatically via ort::init_from()
+# in vad/silero.rs with the correct platform-specific filename. Do NOT set
+# ORT_DYLIB_PATH here — Cargo [env] doesn't support per-target values and
+# a hardcoded filename breaks cross-platform builds.
