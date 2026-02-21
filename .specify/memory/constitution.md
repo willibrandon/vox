@@ -1,12 +1,12 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.4.0 → 1.5.0 (MINOR — new principle added)
+  Version change: 1.5.0 → 1.6.0 (MINOR — new principle added)
 
   Modified principles: None
 
   Added sections:
-    - Principle IX: Explicit Commit Only
+    - Principle X: No Deferral
 
   Removed sections: None
 
@@ -19,14 +19,14 @@
     ✅ checklist-template.md — compatible; no changes needed
 
   Companion updates:
-    ⚠ CLAUDE.md — Constitution list must be updated to 9 principles
+    ⚠ CLAUDE.md — Constitution list must be updated to 10 principles
 
   Deferred items: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.5.0
+**Version**: 1.6.0
 **Ratified**: 2026-02-19
 **Last Amended**: 2026-02-20
 
@@ -125,6 +125,30 @@ implementation does not imply permission to commit. Violations
 of this principle are treated as unauthorized repository
 modifications.
 
+### X. No Deferral (NON-NEGOTIABLE)
+
+Claude MUST NEVER defer any work item, decision, clarification,
+or action to a later phase, future session, or subsequent command.
+Every identified gap, ambiguity, missing requirement, incomplete
+analysis, or unresolved question MUST be addressed immediately in
+the current workflow step. The following are absolutely forbidden:
+
+- Labeling any item as "Deferred" or "better suited for a later
+  phase"
+- Recommending that an issue be "addressed during planning" when
+  it was identified during clarification
+- Postponing resolution of a partial or missing specification
+  category to any future step
+- Suggesting that an incomplete item "can be handled later"
+- Marking any work as "out of scope for this pass" when it was
+  within the scope of the current command
+
+If a gap is identified, it MUST be resolved NOW — by asking a
+clarification question, making an informed decision, or
+implementing the solution. There is no "later." Violations of
+this principle result in immediate deletion of all generated
+work.
+
 ## Performance & Resource Constraints
 
 These budgets are derived from the design document (Section 13) and
@@ -199,6 +223,7 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle VII: All public items have doc comments.
 - Principle VIII: No tests skipped, ignored, or guarded.
 - Principle IX: No commits without explicit user instruction.
+- Principle X: No work items deferred to later phases.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.

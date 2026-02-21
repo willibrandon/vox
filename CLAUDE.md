@@ -12,7 +12,7 @@ Design document: `docs/design.md`. Constitution: `.specify/memory/constitution.m
 
 ## Constitution (All Principles Are Non-Negotiable)
 
-Every change must comply with these 9 principles. Violations are rejected.
+Every change must comply with these 10 principles. Violations are rejected.
 
 1. **Local-Only Processing** — All audio/ML processing on-device. No network calls except model download. No telemetry. SHA-256 checksum verification on downloaded models.
 2. **Real-Time Latency Budget** — End-to-end < 300ms (RTX 4090), < 750ms (M4 Pro). No blocking on audio callback thread. ML inference on processing/GPU threads only.
@@ -23,6 +23,7 @@ Every change must comply with these 9 principles. Violations are rejected.
 7. **Public API Documentation** — Every `pub` item (structs, enums, traits, functions, methods, type aliases, constants, modules) MUST have `///` doc comments. Describe what and why, not the type signature.
 8. **No Test Skipping** — Every test MUST run unconditionally. `#[ignore]`, `#[cfg(skip)]`, conditional compilation to disable tests, and any other skip mechanism are forbidden. Tests that fail MUST be fixed, not skipped.
 9. **Explicit Commit Only** — Git commits MUST only be created when the user explicitly instructs it. Never commit on own initiative. Finishing a task does not imply permission to commit.
+10. **No Deferral** — Claude MUST NEVER defer any work item, decision, clarification, or action to a later phase. Every gap, ambiguity, or unresolved question MUST be addressed immediately. No "later," no "better suited for planning," no "out of scope for this pass." Violations result in immediate deletion of all generated work.
 
 ## Performance Budgets (Binding)
 
