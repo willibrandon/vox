@@ -1,5 +1,13 @@
+[target.'cfg(target_os = "windows")']
+rustflags = []
+
+[target.'cfg(target_os = "macos")']
+rustflags = []
+
 [env]
 # ONNX Runtime dynamic library path for ort crate (load-dynamic feature).
-# The DLL is stored in vendor/onnxruntime/ outside of target/ so it survives cargo clean.
-# Platform-specific: update this path when adding macOS/Linux support.
-ORT_DYLIB_PATH = { value = "vendor/onnxruntime/onnxruntime.dll", relative = true }
+# The dylib is stored in vendor/onnxruntime/ outside of target/ so it survives cargo clean.
+# Platform-conditional: Cargo config [env] does not support per-target values,
+# so the build script or ORT_DYLIB_PATH env var must be set before building.
+# Default to macOS path here; Windows CI overrides via environment variable.
+ORT_DYLIB_PATH = { value = "vendor/onnxruntime/libonnxruntime.dylib", relative = true }

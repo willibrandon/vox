@@ -85,47 +85,47 @@ fn cmd_tab() -> Result<()> {
 fn cmd_delete_last() -> Result<()> {
     use objc2_core_graphics::CGEventFlags;
     // Option + Backspace (backward word delete) — matches Ctrl+Backspace on Windows
-    super::macos::send_shortcut(CGEventFlags::MaskAlternate, 0x33)
+    super::macos::send_shortcut(CGEventFlags::MaskAlternate, super::macos::KEY_BACKSPACE)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_undo() -> Result<()> {
     use objc2_core_graphics::CGEventFlags;
-    super::macos::send_shortcut(CGEventFlags::MaskCommand, 0x06)
+    super::macos::send_shortcut(CGEventFlags::MaskCommand, super::macos::KEY_Z)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_select_all() -> Result<()> {
     use objc2_core_graphics::CGEventFlags;
-    super::macos::send_shortcut(CGEventFlags::MaskCommand, 0x00)
+    super::macos::send_shortcut(CGEventFlags::MaskCommand, super::macos::KEY_A)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_newline() -> Result<()> {
-    super::macos::send_key(0x24)
+    super::macos::send_key(super::macos::KEY_RETURN)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_paragraph() -> Result<()> {
-    super::macos::send_key(0x24)?;
-    super::macos::send_key(0x24)
+    super::macos::send_key(super::macos::KEY_RETURN)?;
+    super::macos::send_key(super::macos::KEY_RETURN)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_copy() -> Result<()> {
     use objc2_core_graphics::CGEventFlags;
-    super::macos::send_shortcut(CGEventFlags::MaskCommand, 0x08)
+    super::macos::send_shortcut(CGEventFlags::MaskCommand, super::macos::KEY_C)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_paste() -> Result<()> {
     use objc2_core_graphics::CGEventFlags;
-    super::macos::send_shortcut(CGEventFlags::MaskCommand, 0x09)
+    super::macos::send_shortcut(CGEventFlags::MaskCommand, super::macos::KEY_V)
 }
 
 #[cfg(target_os = "macos")]
 fn cmd_tab() -> Result<()> {
-    super::macos::send_key(0x30)
+    super::macos::send_key(super::macos::KEY_TAB)
 }
 
 // --- Unsupported platform fallbacks ---

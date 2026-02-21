@@ -16,21 +16,27 @@ use super::{InjectionError, InjectionResult};
 /// Maximum UTF-16 code units per CGEvent keyboard string injection.
 const MAX_CHUNK_UTF16: usize = 20;
 
-// macOS virtual key codes (not provided by objc2-core-graphics)
+/// Virtual key code for the Return key.
 #[cfg(target_os = "macos")]
-const KEY_RETURN: CGKeyCode = 0x24;
+pub(crate) const KEY_RETURN: CGKeyCode = 0x24;
+/// Virtual key code for the Tab key.
 #[cfg(target_os = "macos")]
-const KEY_TAB: CGKeyCode = 0x30;
+pub(crate) const KEY_TAB: CGKeyCode = 0x30;
+/// Virtual key code for the Backspace (Delete) key.
 #[cfg(target_os = "macos")]
-const KEY_BACKSPACE: CGKeyCode = 0x33;
+pub(crate) const KEY_BACKSPACE: CGKeyCode = 0x33;
+/// Virtual key code for the A key.
 #[cfg(target_os = "macos")]
-const KEY_A: CGKeyCode = 0x00;
+pub(crate) const KEY_A: CGKeyCode = 0x00;
+/// Virtual key code for the C key.
 #[cfg(target_os = "macos")]
-const KEY_C: CGKeyCode = 0x08;
+pub(crate) const KEY_C: CGKeyCode = 0x08;
+/// Virtual key code for the V key.
 #[cfg(target_os = "macos")]
-const KEY_V: CGKeyCode = 0x09;
+pub(crate) const KEY_V: CGKeyCode = 0x09;
+/// Virtual key code for the Z key.
 #[cfg(target_os = "macos")]
-const KEY_Z: CGKeyCode = 0x06;
+pub(crate) const KEY_Z: CGKeyCode = 0x06;
 
 /// Split text into chunks of at most 20 UTF-16 code units, never splitting
 /// a surrogate pair across chunk boundaries.
@@ -76,7 +82,8 @@ pub(crate) fn chunk_utf16(text: &str) -> Vec<Vec<u16>> {
 #[cfg(target_os = "macos")]
 fn check_accessibility() -> Result<()> {
     let trusted: bool = unsafe {
-        extern "C" {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
             fn AXIsProcessTrusted() -> bool;
         }
         AXIsProcessTrusted()
@@ -112,16 +119,28 @@ fn has_focused_window() -> Result<bool> {
     const AX_ERROR_NO_VALUE: i32 = -25212;
 
     unsafe {
-        extern "C" {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
             fn AXUIElementCreateApplication(pid: i32) -> *const std::ffi::c_void;
             fn AXUIElementCopyAttributeValue(
                 element: *const std::ffi::c_void,
                 attribute: *const std::ffi::c_void,
                 value: *mut *const std::ffi::c_void,
             ) -> i32;
-            static kAXFocusedUIElementAttribute: *const std::ffi::c_void;
             fn CFRelease(cf: *const std::ffi::c_void);
         }
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            fn CFStringCreateWithCString(
+                alloc: *const std::ffi::c_void,
+                c_str: *const std::ffi::c_char,
+                encoding: u32,
+            ) -> *const std::ffi::c_void;
+        }
+
+        // kCFStringEncodingUTF8 = 0x08000100
+        const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
         let cls = AnyClass::get(c"NSWorkspace")
             .context("NSWorkspace class not found")?;
@@ -142,10 +161,20 @@ fn has_focused_window() -> Result<bool> {
             anyhow::bail!("AXUIElementCreateApplication returned null for pid {pid}");
         }
 
+        let attr_name = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"AXFocusedUIElement".as_ptr(),
+            CF_STRING_ENCODING_UTF8,
+        );
+        if attr_name.is_null() {
+            CFRelease(ax_app);
+            anyhow::bail!("CFStringCreateWithCString failed for AXFocusedUIElement");
+        }
+
         let mut focused_element: *const std::ffi::c_void = std::ptr::null();
         let ax_error = AXUIElementCopyAttributeValue(
             ax_app,
-            kAXFocusedUIElementAttribute,
+            attr_name,
             &mut focused_element,
         );
 
@@ -156,6 +185,7 @@ fn has_focused_window() -> Result<bool> {
         if !focused_element.is_null() {
             CFRelease(focused_element);
         }
+        CFRelease(attr_name);
         CFRelease(ax_app);
 
         match ax_error {
