@@ -41,6 +41,35 @@ static LLAMA_BACKEND: Mutex<Option<Arc<LlamaBackend>>> = Mutex::new(None);
 /// canonical path to detect reloads of the same file.
 static MODEL_CACHE: Mutex<Option<(std::path::PathBuf, Arc<LlamaModel>)>> = Mutex::new(None);
 
+/// Whether the atexit cleanup handler has been registered.
+static ATEXIT_REGISTERED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+// Rust never drops statics. The ggml Metal device singleton (C++ static) asserts
+// all resource sets are empty when freed during process exit. If LlamaModel is
+// still alive in MODEL_CACHE, those Metal resources haven't been released and the
+// assert fires. This atexit handler drops the model and backend before the C++
+// static destructors run. It must be registered AFTER LlamaModel::load_from_file
+// (which initializes the Metal device) so that it runs BEFORE the Metal device
+// destructor in the reverse-order atexit chain.
+unsafe extern "C" fn cleanup_llama_statics() {
+    *MODEL_CACHE.lock() = None;
+    *LLAMA_BACKEND.lock() = None;
+}
+
+unsafe extern "C" {
+    fn atexit(f: unsafe extern "C" fn()) -> std::ffi::c_int;
+}
+
+/// Register the atexit cleanup handler exactly once. Must be called AFTER
+/// `LlamaModel::load_from_file` (which initializes the Metal device) so
+/// it runs before the Metal device destructor in the atexit chain.
+fn register_atexit_cleanup() {
+    if !ATEXIT_REGISTERED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        unsafe { atexit(cleanup_llama_statics) };
+    }
+}
+
 /// The LLM post-processing engine. Takes raw speech-to-text output and produces
 /// polished text or structured voice commands.
 ///
@@ -132,6 +161,7 @@ impl PostProcessor {
                         .map_err(|e| anyhow::anyhow!("failed to load model from {}: {e}", model_path.display()))?;
                     let arc = Arc::new(loaded);
                     *cache = Some((canonical, Arc::clone(&arc)));
+                    register_atexit_cleanup();
                     arc
                 }
             } else {
@@ -144,6 +174,7 @@ impl PostProcessor {
                     .map_err(|e| anyhow::anyhow!("failed to load model from {}: {e}", model_path.display()))?;
                 let arc = Arc::new(loaded);
                 *cache = Some((canonical, Arc::clone(&arc)));
+                register_atexit_cleanup();
                 arc
             }
         };
