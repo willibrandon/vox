@@ -19,8 +19,8 @@
 
 **Purpose**: Add missing Cargo dependencies and populate the module root with public types and API
 
-- [ ] T001 Add `Win32_System_Threading` and `Win32_Security` features to `windows` dependency in crates/vox_core/Cargo.toml (needed for OpenProcess, OpenProcessToken, GetTokenInformation, TOKEN_ELEVATION)
-- [ ] T002 [P] Populate crates/vox_core/src/injector.rs with `InjectionResult` enum (Success, Blocked { reason: InjectionError, text: String }), `InjectionError` enum (ElevatedTarget, NoFocusedWindow, PlatformError(String)), `InjectionBuffer` struct (text: String, error: InjectionError, timestamp: Instant), submodule declarations (`mod windows`/`mod macos`/`mod commands` with `#[cfg]` gates), public `inject_text(text: &str) -> InjectionResult` (empty-string check → Success, then cfg-dispatch to platform impl) and `execute_command(command: &VoiceCommand) -> Result<()>` (cfg-dispatch to commands::execute_command), `//!` module doc and `///` doc comments on all pub items
+- [x] T001 Add `Win32_System_Threading` and `Win32_Security` features to `windows` dependency in crates/vox_core/Cargo.toml (needed for OpenProcess, OpenProcessToken, GetTokenInformation, TOKEN_ELEVATION)
+- [x] T002 [P] Populate crates/vox_core/src/injector.rs with `InjectionResult` enum (Success, Blocked { reason: InjectionError, text: String }), `InjectionError` enum (ElevatedTarget, NoFocusedWindow, PlatformError(String)), `InjectionBuffer` struct (text: String, error: InjectionError, timestamp: Instant), submodule declarations (`mod windows`/`mod macos`/`mod commands` with `#[cfg]` gates), public `inject_text(text: &str) -> InjectionResult` (empty-string check → Success, then cfg-dispatch to platform impl) and `execute_command(command: &VoiceCommand) -> Result<()>` (cfg-dispatch to commands::execute_command), `//!` module doc and `///` doc comments on all pub items
 
 ---
 
@@ -30,11 +30,11 @@
 
 **CRITICAL**: No user story tests can pass until this phase is complete.
 
-- [ ] T003 [P] Implement Windows text injection and UIPI detection in crates/vox_core/src/injector/windows.rs — `is_foreground_elevated() -> Result<bool>` using GetForegroundWindow → GetWindowThreadProcessId → OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) → OpenProcessToken(TOKEN_QUERY) → GetTokenInformation(TokenElevation) → CloseHandle cleanup, access-denied on OpenProcess → return true (assume elevated), null HWND → no-focus signal. `inject_text_impl(text: &str) -> InjectionResult` with null byte stripping (filter U+0000), GetForegroundWindow no-focus check → Blocked(NoFocusedWindow), is_foreground_elevated UIPI pre-check → Blocked(ElevatedTarget), UTF-16 encoding via encode_utf16(), INPUT array construction (KEYEVENTF_UNICODE key-down + KEYEVENTF_UNICODE|KEYEVENTF_KEYUP per code unit, wVk=VIRTUAL_KEY(0), wScan=code_unit), single SendInput call, return value validation (0 → Blocked(PlatformError))
-- [ ] T004 Implement Windows keyboard helpers in crates/vox_core/src/injector/windows.rs — `send_shortcut(modifier: VIRTUAL_KEY, key: VIRTUAL_KEY) -> Result<()>` sending 4-event atomic sequence (modifier-down, key-down, key-up, modifier-up with KEYEVENTF_KEYUP) via single SendInput call for atomicity, `send_key(key: VIRTUAL_KEY) -> Result<()>` sending 2-event key-down/key-up, both verifying SendInput return count
-- [ ] T005 [P] Implement macOS UTF-16 chunking and text injection in crates/vox_core/src/injector/macos.rs — `pub(crate) fn chunk_utf16(text: &str) -> Vec<Vec<u16>>` encoding to Vec<u16> via encode_utf16(), walking in steps of 20 code units, checking for high surrogates (0xD800..=0xDBFF) at chunk boundaries and shortening chunk by 1 to keep surrogate pairs together. `inject_chunk(utf16: &[u16]) -> Result<()>` using CGEventSource::new(HIDSystemState), CGEvent::new_keyboard_event(source, 0, true), CGEvent::keyboard_set_unicode_string(event, len, ptr) (unsafe raw pointer API), CGEvent::post(HIDEventTap), key-up event. `inject_text_impl(text: &str) -> InjectionResult` with AXIsProcessTrusted Accessibility check → Blocked(PlatformError("Accessibility permission not granted")), no-focus check, null byte stripping, chunk_utf16 + inject_chunk loop → Success or Blocked on any chunk failure
-- [ ] T006 Implement macOS keyboard helpers and key code constants in crates/vox_core/src/injector/macos.rs — key code constants: RETURN=0x24, TAB=0x30, BACKSPACE=0x33, KEY_A=0x00, KEY_C=0x08, KEY_V=0x09, KEY_Z=0x06. `send_shortcut(flags: CGEventFlags, keycode: CGKeyCode) -> Result<()>` creating CGEvent key-down, setting flags via CGEvent::set_flags, posting, then key-up event. `send_key(keycode: CGKeyCode) -> Result<()>` posting key-down + key-up without modifier flags
-- [ ] T007 Implement cross-platform voice command dispatch in crates/vox_core/src/injector/commands.rs — `pub fn execute_command(command: &VoiceCommand) -> Result<()>` matching on command.cmd.as_str() for all 8 commands: delete_last → Ctrl+Backspace (Windows) / Option+Backspace (macOS), undo → Ctrl+Z / Cmd+Z, select_all → Ctrl+A / Cmd+A, newline → Enter / Return, paragraph → Enter×2 / Return×2, copy → Ctrl+C / Cmd+C, paste → Ctrl+V / Cmd+V, tab → Tab / Tab. `#[cfg(target_os)]` dispatch to platform send_shortcut/send_key. Unknown command → `Err(anyhow!("Unknown command: {}", command.cmd))`. Doc comments on pub fn.
+- [x] T003 [P] Implement Windows text injection and UIPI detection in crates/vox_core/src/injector/windows.rs — `is_foreground_elevated() -> Result<bool>` using GetForegroundWindow → GetWindowThreadProcessId → OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) → OpenProcessToken(TOKEN_QUERY) → GetTokenInformation(TokenElevation) → CloseHandle cleanup, access-denied on OpenProcess → return true (assume elevated), null HWND → no-focus signal. `inject_text_impl(text: &str) -> InjectionResult` with null byte stripping (filter U+0000), GetForegroundWindow no-focus check → Blocked(NoFocusedWindow), is_foreground_elevated UIPI pre-check → Blocked(ElevatedTarget), UTF-16 encoding via encode_utf16(), INPUT array construction (KEYEVENTF_UNICODE key-down + KEYEVENTF_UNICODE|KEYEVENTF_KEYUP per code unit, wVk=VIRTUAL_KEY(0), wScan=code_unit), single SendInput call, return value validation (0 → Blocked(PlatformError))
+- [x] T004 Implement Windows keyboard helpers in crates/vox_core/src/injector/windows.rs — `send_shortcut(modifier: VIRTUAL_KEY, key: VIRTUAL_KEY) -> Result<()>` sending 4-event atomic sequence (modifier-down, key-down, key-up, modifier-up with KEYEVENTF_KEYUP) via single SendInput call for atomicity, `send_key(key: VIRTUAL_KEY) -> Result<()>` sending 2-event key-down/key-up, both verifying SendInput return count
+- [x] T005 [P] Implement macOS UTF-16 chunking and text injection in crates/vox_core/src/injector/macos.rs — `pub(crate) fn chunk_utf16(text: &str) -> Vec<Vec<u16>>` encoding to Vec<u16> via encode_utf16(), walking in steps of 20 code units, checking for high surrogates (0xD800..=0xDBFF) at chunk boundaries and shortening chunk by 1 to keep surrogate pairs together. `inject_chunk(utf16: &[u16]) -> Result<()>` using CGEventSource::new(HIDSystemState), CGEvent::new_keyboard_event(source, 0, true), CGEvent::keyboard_set_unicode_string(event, len, ptr) (unsafe raw pointer API), CGEvent::post(HIDEventTap), key-up event. `inject_text_impl(text: &str) -> InjectionResult` with AXIsProcessTrusted Accessibility check → Blocked(PlatformError("Accessibility permission not granted")), no-focus check, null byte stripping, chunk_utf16 + inject_chunk loop → Success or Blocked on any chunk failure
+- [x] T006 Implement macOS keyboard helpers and key code constants in crates/vox_core/src/injector/macos.rs — key code constants: RETURN=0x24, TAB=0x30, BACKSPACE=0x33, KEY_A=0x00, KEY_C=0x08, KEY_V=0x09, KEY_Z=0x06. `send_shortcut(flags: CGEventFlags, keycode: CGKeyCode) -> Result<()>` creating CGEvent key-down, setting flags via CGEvent::set_flags, posting, then key-up event. `send_key(keycode: CGKeyCode) -> Result<()>` posting key-down + key-up without modifier flags
+- [x] T007 Implement cross-platform voice command dispatch in crates/vox_core/src/injector/commands.rs — `pub fn execute_command(command: &VoiceCommand) -> Result<()>` matching on command.cmd.as_str() for all 8 commands: delete_last → Ctrl+Backspace (Windows) / Option+Backspace (macOS), undo → Ctrl+Z / Cmd+Z, select_all → Ctrl+A / Cmd+A, newline → Enter / Return, paragraph → Enter×2 / Return×2, copy → Ctrl+C / Cmd+C, paste → Ctrl+V / Cmd+V, tab → Tab / Tab. `#[cfg(target_os)]` dispatch to platform send_shortcut/send_key. Unknown command → `Err(anyhow!("Unknown command: {}", command.cmd))`. Doc comments on pub fn.
 
 **Checkpoint**: All injection and command code implemented. Platform backends ready for all user stories.
 
@@ -48,8 +48,8 @@
 
 ### Tests for User Story 1
 
-- [ ] T008 [P] [US1] Unit tests in crates/vox_core/src/injector.rs — `test_empty_text_noop` (inject_text("") returns InjectionResult::Success immediately without calling platform impl), `test_whitespace_text_valid` (inject_text("  \t\n") is accepted as valid input, not treated as empty — proceeds to platform impl; assert result is NOT Success, e.g. Blocked(NoFocusedWindow), proving the empty-string short-circuit was bypassed)
-- [ ] T009 [US1] Windows platform test in crates/vox_core/src/injector/windows.rs — `test_inject_text_basic` (inject short ASCII text "Hello", verify SendInput is called and returns expected event count matching 2× UTF-16 code unit count)
+- [x] T008 [P] [US1] Unit tests in crates/vox_core/src/injector.rs — `test_empty_text_noop` (inject_text("") returns InjectionResult::Success immediately without calling platform impl), `test_whitespace_text_valid` (inject_text("  \t\n") is accepted as valid input, not treated as empty — proceeds to platform impl; assert result is NOT Success, e.g. Blocked(NoFocusedWindow), proving the empty-string short-circuit was bypassed)
+- [x] T009 [US1] Windows platform test in crates/vox_core/src/injector/windows.rs — `test_inject_text_basic` (inject short ASCII text "Hello", verify SendInput is called and returns expected event count matching 2× UTF-16 code unit count)
 
 **Checkpoint**: Text injection works for basic ASCII on Windows. This is the MVP.
 
@@ -63,7 +63,7 @@
 
 ### Tests for User Story 2
 
-- [ ] T010 [US2] Command mapping tests in crates/vox_core/src/injector/commands.rs — `test_command_mapping_all_known` (execute_command for all 8 commands: delete_last, undo, select_all, newline, paragraph, copy, paste, tab — each returns Ok(())), `test_command_mapping_unknown` (execute_command with cmd="foobar" returns Err containing "Unknown command: foobar")
+- [x] T010 [US2] Command mapping tests in crates/vox_core/src/injector/commands.rs — `test_command_mapping_all_known` (execute_command for all 8 commands: delete_last, undo, select_all, newline, paragraph, copy, paste, tab — each returns Ok(())), `test_command_mapping_unknown` (execute_command with cmd="foobar" returns Err containing "Unknown command: foobar")
 
 **Checkpoint**: All 8 voice commands execute correctly. Combined with US1, the core pipeline is complete.
 
@@ -77,8 +77,8 @@
 
 ### Tests for User Story 3 + User Story 5
 
-- [ ] T011 [P] [US3] Windows Unicode test in crates/vox_core/src/injector/windows.rs — `test_inject_text_unicode` (inject emoji 🚀 and CJK 你好, verify UTF-16 encoding produces correct surrogate pairs for emoji and BMP code units for CJK, SendInput returns expected event count)
-- [ ] T012 [P] [US5] Pure logic chunking tests (platform-independent, NO #[cfg] gate — chunk_utf16 is pure logic) in crates/vox_core/src/injector/macos.rs — `test_utf16_chunking` (30-char ASCII text → 2 chunks, first has 20 code units, second has 10), `test_utf16_chunking_surrogate` (string with emoji 🚀 at UTF-16 position 19 → emoji's surrogate pair not split, chunk shortened to 19 and pair goes to next chunk), `test_utf16_chunking_exact_20` (exactly 20-char ASCII text → single chunk of 20), `test_utf16_chunking_empty` (empty text → empty Vec)
+- [x] T011 [P] [US3] Windows Unicode test in crates/vox_core/src/injector/windows.rs — `test_inject_text_unicode` (inject emoji 🚀 and CJK 你好, verify UTF-16 encoding produces correct surrogate pairs for emoji and BMP code units for CJK, SendInput returns expected event count)
+- [x] T012 [P] [US5] Pure logic chunking tests (platform-independent, NO #[cfg] gate — chunk_utf16 is pure logic) in crates/vox_core/src/injector/macos.rs — `test_utf16_chunking` (30-char ASCII text → 2 chunks, first has 20 code units, second has 10), `test_utf16_chunking_surrogate` (string with emoji 🚀 at UTF-16 position 19 → emoji's surrogate pair not split, chunk shortened to 19 and pair goes to next chunk), `test_utf16_chunking_exact_20` (exactly 20-char ASCII text → single chunk of 20), `test_utf16_chunking_empty` (empty text → empty Vec)
 
 **Checkpoint**: Unicode injection verified on Windows. Chunking logic verified on all platforms.
 
@@ -104,9 +104,9 @@ Per SC-007: detection logic is unit-testable by isolating it from the OS keyboar
 
 **Purpose**: Build verification, test validation, quickstart verification
 
-- [ ] T013 Verify `cargo build -p vox_core --features cuda` produces zero compiler warnings
-- [ ] T014 Run `cargo test -p vox_core --features cuda` and verify all tests pass (unit + platform-specific)
-- [ ] T015 Run quickstart.md validation — verify build and test commands from specs/006-text-injection/quickstart.md work as documented
+- [x] T013 Verify `cargo build -p vox_core --features cuda` produces zero compiler warnings
+- [x] T014 Run `cargo test -p vox_core --features cuda` and verify all tests pass (unit + platform-specific)
+- [x] T015 Run quickstart.md validation — verify build and test commands from specs/006-text-injection/quickstart.md work as documented
 
 ---
 
