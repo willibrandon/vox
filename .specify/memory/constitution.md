@@ -1,34 +1,36 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.6.0 → 1.7.0 (MINOR — new principle added)
+  Version change: 1.7.0 → 1.8.0 (MINOR — Principle X expanded)
 
-  Modified principles: None
+  Modified principles:
+    - Principle X: No Deferral — expanded to explicitly cover all
+      output artifacts (tables, reports, coverage summaries, analysis)
+      and ban hedging language. Added exhaustive list of forbidden
+      hedging phrases.
 
-  Added sections:
-    - Principle XI: No Optional Compilation
-
+  Added sections: None
   Removed sections: None
 
   Templates requiring updates:
-    ✅ plan-template.md — generic Constitution Check covers new
-        principle implicitly
-    ✅ spec-template.md — compatible; no changes needed
-    ✅ tasks-template.md — compatible; no changes needed
-    ✅ agent-file-template.md — compatible; no changes needed
-    ✅ checklist-template.md — compatible; no changes needed
+    ✅ plan-template.md — no changes needed; Constitution Check
+        already references Principle X
+    ✅ spec-template.md — no changes needed
+    ✅ tasks-template.md — no changes needed
+    ✅ agent-file-template.md — no changes needed
+    ✅ checklist-template.md — no changes needed
 
   Companion updates:
-    ⚠ CLAUDE.md — Constitution list must be updated to 11 principles
+    ✅ CLAUDE.md — Principle 10 summary updated to match
 
-  Deferred items: None
+  Follow-up TODOs: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.7.0
+**Version**: 1.8.0
 **Ratified**: 2026-02-19
-**Last Amended**: 2026-02-21
+**Last Amended**: 2026-02-22
 
 ## Core Principles
 
@@ -128,26 +130,43 @@ modifications.
 ### X. No Deferral (NON-NEGOTIABLE)
 
 Claude MUST NEVER defer any work item, decision, clarification,
-or action to a later phase, future session, or subsequent command.
-Every identified gap, ambiguity, missing requirement, incomplete
-analysis, or unresolved question MUST be addressed immediately in
-the current workflow step. The following are absolutely forbidden:
+action, analysis finding, or output item to a later phase, future
+session, or subsequent command. Every identified gap, ambiguity,
+missing requirement, incomplete analysis, or unresolved question
+MUST be addressed immediately in the current workflow step.
 
-- Labeling any item as "Deferred" or "better suited for a later
-  phase"
-- Recommending that an issue be "addressed during planning" when
-  it was identified during clarification
+This prohibition applies to ALL outputs Claude produces — code,
+specifications, analysis reports, coverage tables, summary tables,
+clarification reports, checklists, and any other artifact. No row
+in any table, no bullet in any list, no category in any report
+may carry a status of "Deferred," "Outstanding," "Pending review,"
+"Better suited for later," or any synonym.
+
+The following are absolutely forbidden:
+
+- Labeling any item as "Deferred" in any output artifact
+- Using the status "Outstanding" for items within scope
+- Writing "better suited for planning" or "planning concern"
+- Writing "better addressed in a later pass" or any variation
+- Recommending that an issue be "addressed during planning"
+  when it was identified during clarification
 - Postponing resolution of a partial or missing specification
   category to any future step
 - Suggesting that an incomplete item "can be handled later"
 - Marking any work as "out of scope for this pass" when it was
   within the scope of the current command
+- Using hedging language: "low impact," "not critical enough,"
+  "exceeds question quota," "low priority — can wait"
+- Producing coverage/analysis tables with anything other than
+  "Clear" or "Resolved" — if a category is not Clear, Claude
+  MUST resolve it immediately (ask a question, make a decision,
+  or fill the gap)
 
 If a gap is identified, it MUST be resolved NOW — by asking a
 clarification question, making an informed decision, or
-implementing the solution. There is no "later." Violations of
-this principle result in immediate deletion of all generated
-work.
+implementing the solution. There is no "later." There is no
+"deferred." There is no hedge. Violations of this principle
+result in immediate deletion of all generated work.
 
 ### XI. No Optional Compilation (NON-NEGOTIABLE)
 
