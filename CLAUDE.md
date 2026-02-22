@@ -124,6 +124,8 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 - Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), tray-icon 0.19, global-hotkey 0.6, png 0.17, ctrlc 3.4, tracing 0.1, tracing-subscriber 0.3, tracing-appender 0.2, dirs 5 (011-gpui-app-shell)
 - rusqlite 0.38 (existing — vox.db), JSON settings (existing — settings.json) (011-gpui-app-shell)
 - parking_lot (RwLock), serde/serde_json, anyhow, tracing — all already in vox_core/Cargo.toml
+- Rust 2024 (1.85+) + gpui (git rev 89e9ab97, v0.2.2), vox_core (workspace path dep), serde, parking_lot, tracing, smallvec (012-overlay-hud)
+- Settings persisted to JSON (`settings.json`) — overlay position and opacity stored in existing `Settings` struct (012-overlay-hud)
 
 ## Recent Changes
 
