@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use parking_lot::RwLock;
 
 use crate::config::Settings;
+use crate::dictionary::DictionaryCache;
 use crate::models::DownloadProgress;
 use crate::pipeline::state::PipelineState;
 use crate::pipeline::transcript::{TranscriptEntry, TranscriptStore};
@@ -56,6 +57,8 @@ pub struct VoxState {
     settings: RwLock<Settings>,
     /// Shared transcript store (also used by pipeline orchestrator).
     transcript_store: Arc<TranscriptStore>,
+    /// In-memory dictionary cache (shared with pipeline via Clone).
+    dictionary: DictionaryCache,
     /// Application readiness state machine.
     readiness: RwLock<AppReadiness>,
     /// Current pipeline operational state.
@@ -89,6 +92,8 @@ impl VoxState {
         }
         let save_history = Arc::new(AtomicBool::new(settings.save_history));
         let transcript_store = Arc::new(init_database(data_dir)?);
+        let dictionary = DictionaryCache::load(&data_dir.join("vox.db"))
+            .context("failed to load dictionary cache")?;
 
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -104,6 +109,7 @@ impl VoxState {
         Ok(Self {
             settings: RwLock::new(settings),
             transcript_store,
+            dictionary,
             save_history,
             readiness: RwLock::new(readiness),
             pipeline_state: RwLock::new(PipelineState::Idle),
@@ -215,6 +221,14 @@ impl VoxState {
         &self.tokio_runtime
     }
 
+    /// Access the dictionary cache.
+    ///
+    /// The returned reference shares mutable state with the pipeline's
+    /// clone — CRUD changes are immediately visible to substitution.
+    pub fn dictionary(&self) -> &DictionaryCache {
+        &self.dictionary
+    }
+
     /// Create a transcript writer for pipeline use.
     ///
     /// The writer enforces the `save_history` privacy setting on all writes.
@@ -299,18 +313,17 @@ pub fn ensure_data_dirs() -> Result<PathBuf> {
 
 /// Open or create the SQLite database at `data_dir/vox.db`.
 ///
-/// Creates the transcripts and dictionary tables if they don't exist.
+/// Creates the transcripts table and runs dictionary schema migration
+/// (handles both fresh installs and upgrades from old column names).
 /// Returns the wrapped connection for use by TranscriptStore.
 pub fn init_database(data_dir: &Path) -> Result<TranscriptStore> {
     let db_path = data_dir.join("vox.db");
     let store = TranscriptStore::open(&db_path)?;
 
-    // Dictionary table lives in the same vox.db. A second Connection::open is
-    // fine — runs once at startup and keeps TranscriptStore focused on transcripts.
-    let conn = rusqlite::Connection::open(&db_path)
-        .with_context(|| format!("failed to open database for dictionary schema at {}", db_path.display()))?;
-    conn.execute_batch(crate::dictionary::CREATE_TABLE_SQL)
-        .context("failed to create dictionary table")?;
+    // Dictionary table lives in the same vox.db. migrate_schema handles both
+    // fresh creation and migration from old column names (term → spoken, etc.).
+    crate::dictionary::migrate_schema(&db_path)
+        .context("failed to initialize dictionary schema")?;
 
     Ok(store)
 }

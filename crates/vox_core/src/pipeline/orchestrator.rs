@@ -277,10 +277,17 @@ impl Pipeline {
         });
 
         // Dictionary substitution (fast, in-process)
-        let substituted = self.dictionary.apply_substitutions(&raw_text);
-        if substituted.is_empty() {
+        let sub_result = self.dictionary.apply_substitutions(&raw_text);
+        if sub_result.text.is_empty() {
             self.broadcast(PipelineState::Listening);
             return Ok(());
+        }
+
+        // Increment use counts for matched dictionary entries
+        if !sub_result.matched_ids.is_empty() {
+            if let Err(e) = self.dictionary.increment_use_counts(&sub_result.matched_ids) {
+                tracing::warn!("failed to increment dictionary use counts: {e}");
+            }
         }
 
         // Get focused application name for tone adaptation
@@ -290,7 +297,7 @@ impl Pipeline {
         let hints = self.dictionary.top_hints(50);
         let result: ProcessorOutput = tokio::task::spawn_blocking({
             let llm = self.llm.clone();
-            let text = substituted.clone();
+            let text = sub_result.text.clone();
             let app = active_app.clone();
             move || llm.process(&text, &hints, &app)
         })
