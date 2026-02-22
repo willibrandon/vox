@@ -121,6 +121,8 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 11 principles before implementation begins.
 
 ## Active Technologies
+- Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), tray-icon 0.19, global-hotkey 0.6, tracing 0.1, tracing-subscriber 0.3, tracing-appender 0.2 (NEW), dirs 5 (011-gpui-app-shell)
+- rusqlite 0.38 (existing — vox.db), JSON settings (existing — settings.json) (011-gpui-app-shell)
 
 - Rust 2024 edition (1.85+) + rusqlite 0.38 (bundled SQLite ≥3.45), parking_lot (RwLock), serde/serde_json (import/export), anyhow, tracing — all already in vox_core/Cargo.toml (010-custom-dictionary)
 - SQLite (vox.db — shared with transcripts table, created by Feature 009) (010-custom-dictionary)

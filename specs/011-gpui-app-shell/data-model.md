@@ -1,0 +1,192 @@
+# Data Model: GPUI Application Shell
+
+**Input**: spec.md Key Entities, research.md decisions
+**Date**: 2026-02-21
+
+## Entity: VoxTheme
+
+**Location**: `crates/vox_ui/src/theme.rs`
+**GPUI Trait**: `impl Global for VoxTheme`
+
+A shared visual appearance definition accessible from any GPUI context via `cx.global::<VoxTheme>()`. Contains all color values organized by semantic category. Initialized once during app startup and set as a GPUI Global.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| colors | ThemeColors | Complete color palette |
+
+### Constructor
+
+- `VoxTheme::dark() -> Self` — Creates the dark theme (only theme for now).
+
+---
+
+## Entity: ThemeColors
+
+**Location**: `crates/vox_ui/src/theme.rs`
+
+All 28 semantically-named color values using GPUI's `Hsla` type. Organized into 9 categories matching the spec's Key Entities definition.
+
+### Fields
+
+| Category | Field | Type | Dark Theme Value | Description |
+|----------|-------|------|------------------|-------------|
+| Background | overlay_bg | Hsla | hsla(0.0, 0.0, 0.1, 0.92) | Semi-transparent overlay |
+| Background | surface | Hsla | hsla(0.0, 0.0, 0.12, 1.0) | Standard surface |
+| Background | elevated_surface | Hsla | hsla(0.0, 0.0, 0.16, 1.0) | Elevated surface |
+| Background | panel_bg | Hsla | hsla(0.0, 0.0, 0.14, 1.0) | Panel background |
+| Text | text | Hsla | hsla(0.0, 0.0, 0.93, 1.0) | Primary text |
+| Text | text_muted | Hsla | hsla(0.0, 0.0, 0.55, 1.0) | Secondary text |
+| Text | text_accent | Hsla | hsla(0.58, 0.8, 0.65, 1.0) | Accent text (blue) |
+| Border | border | Hsla | hsla(0.0, 0.0, 0.2, 1.0) | Standard border |
+| Border | border_variant | Hsla | hsla(0.0, 0.0, 0.25, 1.0) | Subtle border |
+| Accent | accent | Hsla | hsla(0.58, 0.8, 0.65, 1.0) | Primary accent |
+| Accent | accent_hover | Hsla | hsla(0.58, 0.85, 0.7, 1.0) | Accent hover |
+| Status | status_idle | Hsla | hsla(0.0, 0.0, 0.55, 1.0) | Gray — idle |
+| Status | status_listening | Hsla | hsla(0.35, 0.9, 0.55, 1.0) | Green — listening |
+| Status | status_processing | Hsla | hsla(0.58, 0.8, 0.65, 1.0) | Blue — processing |
+| Status | status_success | Hsla | hsla(0.35, 0.9, 0.55, 1.0) | Green — success |
+| Status | status_error | Hsla | hsla(0.0, 0.85, 0.6, 1.0) | Red — error |
+| Status | status_downloading | Hsla | hsla(0.12, 0.9, 0.6, 1.0) | Orange — downloading |
+| Waveform | waveform_active | Hsla | hsla(0.35, 0.9, 0.55, 1.0) | Active waveform |
+| Waveform | waveform_inactive | Hsla | hsla(0.0, 0.0, 0.3, 1.0) | Inactive waveform |
+| Button | button_primary_bg | Hsla | hsla(0.58, 0.8, 0.55, 1.0) | Primary button bg |
+| Button | button_primary_text | Hsla | hsla(0.0, 0.0, 1.0, 1.0) | Primary button text |
+| Button | button_secondary_bg | Hsla | hsla(0.0, 0.0, 0.2, 1.0) | Secondary button bg |
+| Button | button_secondary_text | Hsla | hsla(0.0, 0.0, 0.8, 1.0) | Secondary button text |
+| Input | input_bg | Hsla | hsla(0.0, 0.0, 0.08, 1.0) | Input field bg |
+| Input | input_border | Hsla | hsla(0.0, 0.0, 0.25, 1.0) | Input field border |
+| Input | input_focus_border | Hsla | hsla(0.58, 0.8, 0.65, 1.0) | Input focus border |
+
+### Validation Rules
+
+- All `h` (hue) values: 0.0..=1.0
+- All `s` (saturation) values: 0.0..=1.0
+- All `l` (lightness) values: 0.0..=1.0
+- All `a` (alpha) values: 0.0..=1.0
+- overlay_bg alpha < 1.0 (semi-transparent)
+- All other backgrounds alpha == 1.0 (opaque)
+
+---
+
+## Entity: Layout Constants
+
+**Location**: `crates/vox_ui/src/layout.rs`
+
+Defined spacing, border radius, and component size scales. All values use GPUI's `Pixels` type via the `px()` function. Organized into three sub-modules.
+
+### spacing module
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| XS | Pixels | px(4.0) | Extra small spacing |
+| SM | Pixels | px(8.0) | Small spacing |
+| MD | Pixels | px(12.0) | Medium spacing |
+| LG | Pixels | px(16.0) | Large spacing |
+| XL | Pixels | px(24.0) | Extra large spacing |
+
+### radius module
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| SM | Pixels | px(4.0) | Small border radius |
+| MD | Pixels | px(8.0) | Medium border radius |
+| LG | Pixels | px(12.0) | Large border radius |
+| PILL | Pixels | px(999.0) | Pill/fully rounded |
+
+### size module
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| OVERLAY_WIDTH | Pixels | px(360.0) | Overlay HUD width |
+| OVERLAY_HEIGHT | Pixels | px(80.0) | Overlay HUD height |
+| SETTINGS_WIDTH | Pixels | px(800.0) | Settings panel width |
+| SETTINGS_HEIGHT | Pixels | px(600.0) | Settings panel height |
+
+---
+
+## Entity: Application Actions
+
+**Location**: `crates/vox_ui/src/key_bindings.rs`
+**GPUI Pattern**: `actions!(vox, [...])`
+
+Discrete operations dispatched via keyboard shortcuts, tray menu, or programmatic dispatch. Each action is a zero-sized struct generated by the `actions!` macro.
+
+### Actions
+
+| Action | Description | Scope |
+|--------|-------------|-------|
+| ToggleRecording | Start/stop dictation recording | Global (via hotkey) + In-window |
+| StopRecording | Force-stop recording | In-window |
+| ToggleOverlay | Show/hide overlay HUD | In-window |
+| OpenSettings | Open settings panel | In-window + Tray |
+| Quit | Exit application cleanly | In-window + Tray |
+| CopyLastTranscript | Copy last transcript to clipboard | In-window |
+| ClearHistory | Clear transcript history | In-window |
+
+---
+
+## Entity: Key Bindings
+
+**Location**: `crates/vox_ui/src/key_bindings.rs`
+
+Mapping of keyboard combinations to actions. Platform-conditional bindings use `#[cfg(target_os)]`.
+
+### Bindings
+
+| Shortcut (Windows) | Shortcut (macOS) | Action | Context |
+|---------------------|-------------------|--------|---------|
+| Ctrl+Shift+V | Cmd+Shift+V | ToggleOverlay | None (global within app) |
+| Ctrl+, | Cmd+, | OpenSettings | None |
+| Ctrl+Q | Cmd+Q | Quit | None |
+
+### Global Hotkey (OS-level)
+
+| Hotkey | Action | Registration |
+|--------|--------|--------------|
+| CapsLock (configurable) | ToggleRecording | `global-hotkey` crate, registered at startup |
+
+---
+
+## Entity: OverlayHud
+
+**Location**: `crates/vox_ui/src/overlay_hud.rs`
+**GPUI Trait**: `impl Render for OverlayHud`
+
+Minimal placeholder view for the overlay window. Displays the current application readiness state (Downloading/Loading/Ready) and pipeline state. This is a scaffold — full UI wiring happens in subsequent features.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| (none for placeholder) | — | Reads state from `cx.global::<VoxState>()` |
+
+### Render Output
+
+- Reads `VoxState::readiness()` and `VoxState::pipeline_state()` from GPUI globals
+- Displays status text: "Downloading models...", "Loading pipeline...", "Ready", etc.
+- Uses `VoxTheme` colors from global for styling
+- Semi-transparent background via `overlay_bg` color
+
+---
+
+## Entity: LoggingGuard
+
+**Location**: `crates/vox_core/src/logging.rs`
+
+Wrapper around `tracing_appender::non_blocking::WorkerGuard`. Must be held for the application lifetime to ensure log flushing. Dropping it flushes pending log entries.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| _guard | WorkerGuard | Keeps non-blocking writer alive |
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| init_logging | `fn init_logging() -> LoggingGuard` | Initialize daily-rotating file logging |
+| log_dir | `fn log_dir() -> PathBuf` | Platform-specific log directory |
+| cleanup_old_logs | `pub fn cleanup_old_logs(dir: &Path, retention_days: u32)` | Delete logs older than N days |
