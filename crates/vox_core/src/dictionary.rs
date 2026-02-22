@@ -43,7 +43,11 @@ pub struct DictionaryCache {
     hints: Arc<Vec<DictionaryEntry>>,
 }
 
-const CREATE_TABLE_SQL: &str = "\
+/// SQL statement to create the dictionary table.
+///
+/// Shared between `DictionaryCache::load` and `state::init_database` to
+/// prevent schema drift from duplicated DDL.
+pub const CREATE_TABLE_SQL: &str = "\
     CREATE TABLE IF NOT EXISTS dictionary (\
         id INTEGER PRIMARY KEY AUTOINCREMENT,\
         term TEXT UNIQUE NOT NULL COLLATE NOCASE,\

@@ -19,7 +19,7 @@
 
 **Purpose**: Add the gpui dependency required by Constitution Principle XI
 
-- [ ] T001 Add `gpui.workspace = true` (non-optional) to `crates/vox_core/Cargo.toml` and verify compilation with `cargo check -p vox_core --features cuda`
+- [x] T001 Add `gpui.workspace = true` (non-optional) to `crates/vox_core/Cargo.toml` and verify compilation with `cargo check -p vox_core --features cuda`
 
 **Checkpoint**: vox_core compiles with gpui as a required dependency
 
@@ -31,8 +31,8 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T002 [P] Implement `OverlayPosition` enum (5 variants), `ThemeMode` enum (3 variants), and `Settings` struct (23 fields across 7 categories) with `Default` impl, `#[serde(default)]`, `Serialize`, `Deserialize`, `Clone`, `Debug` derives in `crates/vox_core/src/config.rs`
-- [ ] T003 [P] Implement `AppReadiness` enum with `Downloading { vad_progress, whisper_progress, llm_progress }`, `Loading { stage }`, and `Ready` variants using `crate::models::DownloadProgress` in `crates/vox_core/src/state.rs`
+- [x] T002 [P] Implement `OverlayPosition` enum (5 variants), `ThemeMode` enum (3 variants), and `Settings` struct (23 fields across 7 categories) with `Default` impl, `#[serde(default)]`, `Serialize`, `Deserialize`, `Clone`, `Debug` derives in `crates/vox_core/src/config.rs`
+- [x] T003 [P] Implement `AppReadiness` enum with `Downloading { vad_progress, whisper_progress, llm_progress }`, `Loading { stage }`, and `Ready` variants using `crate::models::DownloadProgress` in `crates/vox_core/src/state.rs`
 
 **Checkpoint**: Foundation types compile — Settings struct with 23 fields and AppReadiness enum exist
 
@@ -46,9 +46,9 @@
 
 ### Implementation for User Story 2
 
-- [ ] T004 [US2] Implement `Settings::load(data_dir: &Path) -> Result<Self>` with corrupt-file recovery (log warning via `tracing::warn!`, return defaults) in `crates/vox_core/src/config.rs`
-- [ ] T005 [US2] Implement `Settings::save(&self, data_dir: &Path) -> Result<()>` with atomic write pattern (write to `settings.json.tmp`, rename to `settings.json`) in `crates/vox_core/src/config.rs`
-- [ ] T006 [US2] Write tests in `crates/vox_core/src/config.rs`: `test_settings_default` (sane defaults), `test_settings_roundtrip` (save then load preserves all 23 fields), `test_settings_corrupt_file` (corrupt JSON resets to defaults), `test_settings_missing_file` (missing file creates defaults), `test_settings_forward_backward_compat` (extra fields ignored, missing fields get defaults)
+- [x] T004 [US2] Implement `Settings::load(data_dir: &Path) -> Result<Self>` with corrupt-file recovery (log warning via `tracing::warn!`, return defaults) in `crates/vox_core/src/config.rs`
+- [x] T005 [US2] Implement `Settings::save(&self, data_dir: &Path) -> Result<()>` with atomic write pattern (write to `settings.json.tmp`, rename to `settings.json`) in `crates/vox_core/src/config.rs`
+- [x] T006 [US2] Write tests in `crates/vox_core/src/config.rs`: `test_settings_default` (sane defaults), `test_settings_roundtrip` (save then load preserves all 23 fields), `test_settings_corrupt_file` (corrupt JSON resets to defaults), `test_settings_missing_file` (missing file creates defaults), `test_settings_forward_backward_compat` (extra fields ignored, missing fields get defaults)
 
 **Checkpoint**: Settings persistence fully functional — load, save, corrupt recovery, forward/backward compatibility all tested
 
@@ -64,12 +64,12 @@
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Implement `data_dir() -> Result<PathBuf>` (using `dirs::data_local_dir()` on Windows, `dirs::data_dir()` on macOS, appending `com.vox.app`) and `ensure_data_dirs() -> Result<PathBuf>` (creates data dir + models subdir) in `crates/vox_core/src/state.rs`
-- [ ] T008 [US1] Implement `init_database(data_dir: &Path) -> Result<TranscriptStore>` that opens `vox.db`, creates transcripts table (via TranscriptStore) and dictionary table (`CREATE TABLE IF NOT EXISTS dictionary` with existing schema from dictionary.rs) in `crates/vox_core/src/state.rs`
-- [ ] T009 [US1] Implement `VoxState` struct (fields: `settings: RwLock<Settings>`, `transcript_store: Arc<TranscriptStore>`, `readiness: RwLock<AppReadiness>`, `pipeline_state: RwLock<PipelineState>`, `tokio_runtime: Runtime`, `data_dir: PathBuf`), `impl gpui::Global for VoxState {}`, and `VoxState::new(data_dir: &Path) -> Result<Self>` constructor in `crates/vox_core/src/state.rs`
-- [ ] T010 [US1] Implement VoxState accessor methods: `settings()`, `update_settings()`, `data_dir()`, `tokio_runtime()`, `transcript_store()` in `crates/vox_core/src/state.rs`
-- [ ] T011 [US1] Refactor `Pipeline::new()` to accept `Arc<TranscriptStore>` instead of owned `TranscriptStore`, update all internal usages and test helpers in `crates/vox_core/src/pipeline/orchestrator.rs`
-- [ ] T012 [US1] Write tests in `crates/vox_core/src/state.rs`: `test_vox_state_init` (settings file + db created, readiness is Downloading), `test_data_dir_platform` (correct platform path), `test_vox_state_existing_data` (loads existing settings and db)
+- [x] T007 [US1] Implement `data_dir() -> Result<PathBuf>` (using `dirs::data_local_dir()` on Windows, `dirs::data_dir()` on macOS, appending `com.vox.app`) and `ensure_data_dirs() -> Result<PathBuf>` (creates data dir + models subdir) in `crates/vox_core/src/state.rs`
+- [x] T008 [US1] Implement `init_database(data_dir: &Path) -> Result<TranscriptStore>` that opens `vox.db`, creates transcripts table (via TranscriptStore) and dictionary table (`CREATE TABLE IF NOT EXISTS dictionary` with existing schema from dictionary.rs) in `crates/vox_core/src/state.rs`
+- [x] T009 [US1] Implement `VoxState` struct (fields: `settings: RwLock<Settings>`, `transcript_store: Arc<TranscriptStore>`, `readiness: RwLock<AppReadiness>`, `pipeline_state: RwLock<PipelineState>`, `tokio_runtime: Runtime`, `data_dir: PathBuf`), `impl gpui::Global for VoxState {}`, and `VoxState::new(data_dir: &Path) -> Result<Self>` constructor in `crates/vox_core/src/state.rs`
+- [x] T010 [US1] Implement VoxState accessor methods: `settings()`, `update_settings()`, `data_dir()`, `tokio_runtime()`, `transcript_store()` in `crates/vox_core/src/state.rs`
+- [x] T011 [US1] Refactor `Pipeline::new()` to accept `Arc<TranscriptStore>` instead of owned `TranscriptStore`, update all internal usages and test helpers in `crates/vox_core/src/pipeline/orchestrator.rs`
+- [x] T012 [US1] Write tests in `crates/vox_core/src/state.rs`: `test_vox_state_init` (settings file + db created, readiness is Downloading), `test_data_dir_platform` (correct platform path), `test_vox_state_existing_data` (loads existing settings and db)
 
 **Checkpoint**: VoxState initializes correctly — GPUI Global impl compiles, data directory created, settings loaded, database schema created
 
@@ -85,11 +85,11 @@
 
 ### Implementation for User Story 3
 
-- [ ] T013 [US3] Implement `TranscriptStore::search(query: &str) -> Result<Vec<TranscriptEntry>>` with SQL LIKE matching on both `raw_text` and `polished_text`, ordered by `created_at DESC` in `crates/vox_core/src/pipeline/transcript.rs`
-- [ ] T014 [US3] Implement `TranscriptStore::delete(id: &str) -> Result<()>` for single record deletion in `crates/vox_core/src/pipeline/transcript.rs`
-- [ ] T015 [US3] Implement `TranscriptStore::clear_secure() -> Result<()>` that executes UPDATE (overwrite text fields with empty strings) → DELETE all rows → VACUUM in `crates/vox_core/src/pipeline/transcript.rs`
-- [ ] T016 [US3] Implement VoxState transcript wrapper methods: `save_transcript()`, `get_transcripts()`, `search_transcripts()`, `delete_transcript()`, `clear_history()` that delegate to `Arc<TranscriptStore>` in `crates/vox_core/src/state.rs`
-- [ ] T017 [US3] Write tests in `crates/vox_core/src/pipeline/transcript.rs`: `test_transcript_search` (finds matching transcripts in raw_text and polished_text), `test_transcript_delete` (single record removed, others intact), `test_transcript_clear_secure` (all records gone after overwrite + DELETE + VACUUM)
+- [x] T013 [US3] Implement `TranscriptStore::search(query: &str) -> Result<Vec<TranscriptEntry>>` with SQL LIKE matching on both `raw_text` and `polished_text`, ordered by `created_at DESC` in `crates/vox_core/src/pipeline/transcript.rs`
+- [x] T014 [US3] Implement `TranscriptStore::delete(id: &str) -> Result<()>` for single record deletion in `crates/vox_core/src/pipeline/transcript.rs`
+- [x] T015 [US3] Implement `TranscriptStore::clear_secure() -> Result<()>` that executes UPDATE (overwrite text fields with empty strings) → DELETE all rows → VACUUM in `crates/vox_core/src/pipeline/transcript.rs`
+- [x] T016 [US3] Implement VoxState transcript wrapper methods: `save_transcript()`, `get_transcripts()`, `search_transcripts()`, `delete_transcript()`, `clear_history()` that delegate to `Arc<TranscriptStore>` in `crates/vox_core/src/state.rs`
+- [x] T017 [US3] Write tests in `crates/vox_core/src/pipeline/transcript.rs`: `test_transcript_search` (finds matching transcripts in raw_text and polished_text), `test_transcript_delete` (single record removed, others intact), `test_transcript_clear_secure` (all records gone after overwrite + DELETE + VACUUM)
 
 **Checkpoint**: Full transcript CRUD operational — search, delete, and secure clear all tested
 
@@ -105,8 +105,8 @@
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] Implement VoxState methods: `readiness() -> AppReadiness` (clone from RwLock), `set_readiness(state)`, `pipeline_state() -> PipelineState` (clone from RwLock), `set_pipeline_state(state)` in `crates/vox_core/src/state.rs`
-- [ ] T019 [US4] Write tests in `crates/vox_core/src/state.rs`: `test_app_readiness_transitions` (Downloading -> Loading -> Ready), `test_pipeline_state_transitions` (Idle -> Listening -> Processing -> Injecting -> Idle)
+- [x] T018 [US4] Implement VoxState methods: `readiness() -> AppReadiness` (clone from RwLock), `set_readiness(state)`, `pipeline_state() -> PipelineState` (clone from RwLock), `set_pipeline_state(state)` in `crates/vox_core/src/state.rs`
+- [x] T019 [US4] Write tests in `crates/vox_core/src/state.rs`: `test_app_readiness_transitions` (Downloading -> Loading -> Ready), `test_pipeline_state_transitions` (Idle -> Listening -> Processing -> Injecting -> Idle)
 
 **Checkpoint**: Readiness and pipeline state tracking fully functional with tested transitions
 
@@ -122,8 +122,8 @@
 
 ### Implementation for User Story 5
 
-- [ ] T020 [US5] Add `save_history` check to `VoxState::save_transcript()` — return `Ok(())` immediately when `self.settings().save_history` is false in `crates/vox_core/src/state.rs`
-- [ ] T021 [US5] Write tests in `crates/vox_core/src/state.rs`: `test_save_history_disabled` (no transcript saved when save_history=false), `test_clear_history_vacuum` (database file size decreases after clear_history with VACUUM)
+- [x] T020 [US5] Add `save_history` check to `VoxState::save_transcript()` — return `Ok(())` immediately when `self.settings().save_history` is false in `crates/vox_core/src/state.rs`
+- [x] T021 [US5] Write tests in `crates/vox_core/src/state.rs`: `test_save_history_disabled` (no transcript saved when save_history=false), `test_clear_history_vacuum` (database file size decreases after clear_history with VACUUM)
 
 **Checkpoint**: Privacy controls verified — transcript saving respects save_history setting, secure delete leaves no recoverable data
 
@@ -133,9 +133,9 @@
 
 **Purpose**: Final validation across all user stories
 
-- [ ] T022 [P] Verify zero compiler warnings with `cargo build -p vox_core --features cuda` and `cargo clippy -p vox_core --features cuda`
-- [ ] T023 Run all quickstart.md verification scenarios (7 scenarios) and confirm all pass
-- [ ] T024 Verify all `pub` items in state.rs, config.rs, and extended transcript.rs have `///` doc comments per Constitution Principle VII
+- [x] T022 [P] Verify zero compiler warnings with `cargo build -p vox_core --features cuda` and `cargo clippy -p vox_core --features cuda`
+- [x] T023 Run all quickstart.md verification scenarios (7 scenarios) and confirm all pass
+- [x] T024 Verify all `pub` items in state.rs, config.rs, and extended transcript.rs have `///` doc comments per Constitution Principle VII
 
 ---
 

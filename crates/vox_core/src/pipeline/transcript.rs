@@ -144,6 +144,65 @@ impl TranscriptStore {
         Ok(deleted)
     }
 
+    /// Search transcripts by text content.
+    ///
+    /// Matches against both raw_text and polished_text using SQL LIKE.
+    /// Returns results ordered by created_at DESC.
+    pub fn search(&self, query: &str) -> Result<Vec<TranscriptEntry>> {
+        let conn = self.connection.lock();
+        let pattern = format!("%{query}%");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, raw_text, polished_text, target_app, duration_ms, latency_ms, created_at \
+                 FROM transcripts \
+                 WHERE raw_text LIKE ?1 OR polished_text LIKE ?1 \
+                 ORDER BY created_at DESC",
+            )
+            .context("failed to prepare search query")?;
+
+        let entries = stmt
+            .query_map(rusqlite::params![pattern], |row| {
+                Ok(TranscriptEntry {
+                    id: row.get(0)?,
+                    raw_text: row.get(1)?,
+                    polished_text: row.get(2)?,
+                    target_app: row.get(3)?,
+                    duration_ms: row.get(4)?,
+                    latency_ms: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })
+            .context("failed to search transcripts")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to read search result row")?;
+
+        Ok(entries)
+    }
+
+    /// Delete a single transcript by ID.
+    pub fn delete(&self, id: &str) -> Result<()> {
+        let conn = self.connection.lock();
+        conn.execute("DELETE FROM transcripts WHERE id = ?1", rusqlite::params![id])
+            .context("failed to delete transcript")?;
+        Ok(())
+    }
+
+    /// Securely delete all transcripts.
+    ///
+    /// Overwrites text fields with empty strings, deletes all rows, then
+    /// executes VACUUM to reclaim free pages. This prevents recovery of
+    /// transcript data from the database file.
+    pub fn clear_secure(&self) -> Result<()> {
+        let conn = self.connection.lock();
+        conn.execute_batch(
+            "UPDATE transcripts SET raw_text = '', polished_text = '', target_app = '';\
+             DELETE FROM transcripts;\
+             VACUUM;",
+        )
+        .context("failed to securely clear transcripts")?;
+        Ok(())
+    }
+
     /// Total number of transcript records.
     pub fn count(&self) -> Result<usize> {
         let conn = self.connection.lock();
@@ -276,6 +335,88 @@ mod tests {
             let store = TranscriptStore::open(&db_path).expect("open 2");
             assert_eq!(store.count().expect("count"), 0);
         }
+    }
+
+    #[test]
+    fn test_transcript_search() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = TranscriptStore::open(&dir.path().join("test.db")).expect("open");
+
+        store.save(&TranscriptEntry {
+            id: "s1".into(),
+            raw_text: "hello world".into(),
+            polished_text: "Hello, world!".into(),
+            target_app: "TestApp".into(),
+            duration_ms: 1000,
+            latency_ms: 200,
+            created_at: "2026-02-20T10:00:00Z".into(),
+        }).expect("save");
+
+        store.save(&TranscriptEntry {
+            id: "s2".into(),
+            raw_text: "goodbye moon".into(),
+            polished_text: "Goodbye, moon.".into(),
+            target_app: "TestApp".into(),
+            duration_ms: 1000,
+            latency_ms: 200,
+            created_at: "2026-02-20T11:00:00Z".into(),
+        }).expect("save");
+
+        // Search raw_text
+        let results = store.search("hello").expect("search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+
+        // Search polished_text
+        let results = store.search("Goodbye").expect("search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s2");
+
+        // Search no match
+        let results = store.search("nonexistent").expect("search");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_transcript_delete() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = TranscriptStore::open(&dir.path().join("test.db")).expect("open");
+
+        store.save(&make_entry("del-1", "2026-02-20T10:00:00Z")).expect("save");
+        store.save(&make_entry("del-2", "2026-02-20T11:00:00Z")).expect("save");
+        store.save(&make_entry("del-3", "2026-02-20T12:00:00Z")).expect("save");
+
+        assert_eq!(store.count().expect("count"), 3);
+
+        store.delete("del-2").expect("delete");
+        assert_eq!(store.count().expect("count"), 2);
+
+        let entries = store.list(10, 0).expect("list");
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"del-1"));
+        assert!(!ids.contains(&"del-2"));
+        assert!(ids.contains(&"del-3"));
+    }
+
+    #[test]
+    fn test_transcript_clear_secure() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = TranscriptStore::open(&db_path).expect("open");
+
+        for i in 0..5 {
+            store
+                .save(&make_entry(&format!("clr-{i}"), &format!("2026-02-{:02}T10:00:00Z", 15 + i)))
+                .expect("save");
+        }
+        assert_eq!(store.count().expect("count"), 5);
+
+        store.clear_secure().expect("clear_secure");
+        assert_eq!(store.count().expect("count"), 0);
+
+        // Verify the database is still functional after VACUUM
+        store.save(&make_entry("after-clear", "2026-02-21T10:00:00Z")).expect("save after clear");
+        assert_eq!(store.count().expect("count"), 1);
     }
 
     #[test]

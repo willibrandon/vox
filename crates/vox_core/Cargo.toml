@@ -13,6 +13,7 @@ cuda = ["whisper-rs/cuda", "llama-cpp-2/cuda"]
 metal = ["whisper-rs/metal", "llama-cpp-2/metal"]
 
 [dependencies]
+gpui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

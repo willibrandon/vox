@@ -7375,6 +7375,7 @@ dependencies = [
  "dirs 5.0.1",
  "encoding_rs",
  "global-hotkey",
+ "gpui",
  "hound",
  "llama-cpp-2",
  "objc2 0.6.3",

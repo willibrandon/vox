@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms. Audio capture, voice activity detection, speech recognition, LLM post-processing, text injection, pipeline orchestration, and model management are implemented and tested (130 tests, 0 ignored). Specifically: cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, Whisper Large V3 Turbo ASR via whisper.cpp, Qwen 2.5 3B Instruct post-processor via llama.cpp (filler removal, punctuation, course correction, number/date/email formatting, voice command detection, tone adaptation, token streaming), OS-level text injection with voice command keystroke mapping (Windows SendInput with UIPI elevation detection, macOS CGEvent with UTF-16 chunking and AX focus detection), async pipeline orchestration (tokio select loop, state broadcasting, transcript persistence, activation modes, dictionary substitution), and model management (model registry with platform-specific directories, concurrent downloading with SHA-256 checksum verification, atomic file writes, GGUF/GGML/ONNX format detection, broadcast progress events).
+Early development. The three-crate workspace compiles on both platforms. Audio capture, voice activity detection, speech recognition, LLM post-processing, text injection, pipeline orchestration, model management, and application state are implemented and tested (148 tests, 0 ignored). Specifically: cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, Whisper Large V3 Turbo ASR via whisper.cpp, Qwen 2.5 3B Instruct post-processor via llama.cpp (filler removal, punctuation, course correction, number/date/email formatting, voice command detection, tone adaptation, token streaming), OS-level text injection with voice command keystroke mapping (Windows SendInput with UIPI elevation detection, macOS CGEvent with UTF-16 chunking and AX focus detection), async pipeline orchestration (tokio select loop, state broadcasting, transcript persistence, activation modes, dictionary substitution), model management (model registry with platform-specific directories, concurrent downloading with SHA-256 checksum verification, atomic file writes, GGUF/GGML/ONNX format detection, broadcast progress events), and application state (VoxState as GPUI Global, JSON settings with atomic write and corrupt-file recovery, SQLite transcript history with search/delete/secure-clear, AppReadiness state machine, privacy-enforced transcript writes via TranscriptWriter, platform data directories).
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ cargo build --release -p vox --features vox_core/cuda
 ```
 crates/
   vox/          Binary entry point
-  vox_core/     Backend — audio, VAD, ASR, LLM, text injection (11 modules)
+  vox_core/     Backend — audio, VAD, ASR, LLM, text injection (13 modules)
   vox_ui/       GPUI UI components — overlay, panels, controls (14 modules)
 assets/icons/   Icon assets
 tests/          Integration test stubs
@@ -64,7 +64,7 @@ specs/          Feature specifications
 Three-crate Cargo workspace:
 
 - **vox** — Binary. GPUI application shell, window setup, system tray, global hotkeys.
-- **vox_core** — Library. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, config, model management. Feature-gated for `cuda` and `metal`.
+- **vox_core** — Library. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, config, state, model management. Feature-gated for `cuda` and `metal`.
 - **vox_ui** — Library. GPUI UI components. Overlay HUD, settings, history, dictionary editor, model manager, log viewer.
 
 ## Target Hardware

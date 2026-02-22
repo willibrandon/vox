@@ -21,7 +21,8 @@ use crate::llm::{PostProcessor, ProcessorOutput};
 use crate::vad::{self, SpeechChunker, VadConfig, VadStateMachine};
 
 use super::state::{PipelineCommand, PipelineState};
-use super::transcript::{TranscriptEntry, TranscriptStore};
+use super::transcript::TranscriptEntry;
+use crate::state::TranscriptWriter;
 
 /// The pipeline orchestrator. Coordinates audio capture, VAD, ASR, LLM,
 /// dictionary substitution, and text injection into a single async flow.
@@ -33,7 +34,7 @@ pub struct Pipeline {
     asr: AsrEngine,
     llm: PostProcessor,
     dictionary: DictionaryCache,
-    transcript_store: TranscriptStore,
+    transcript_writer: TranscriptWriter,
     state_tx: broadcast::Sender<PipelineState>,
     command_rx: mpsc::Receiver<PipelineCommand>,
     stop_flag: Arc<AtomicBool>,
@@ -63,7 +64,7 @@ impl Pipeline {
         asr: AsrEngine,
         llm: PostProcessor,
         dictionary: DictionaryCache,
-        transcript_store: TranscriptStore,
+        transcript_writer: TranscriptWriter,
         state_tx: broadcast::Sender<PipelineState>,
         command_rx: mpsc::Receiver<PipelineCommand>,
         vad_model_path: PathBuf,
@@ -73,7 +74,7 @@ impl Pipeline {
             asr,
             llm,
             dictionary,
-            transcript_store,
+            transcript_writer,
             state_tx,
             command_rx,
             stop_flag: Arc::new(AtomicBool::new(false)),
@@ -316,7 +317,7 @@ impl Pipeline {
                     latency_ms,
                     created_at: chrono_now_iso8601(),
                 };
-                if let Err(error) = self.transcript_store.save(&entry) {
+                if let Err(error) = self.transcript_writer.save(&entry) {
                     tracing::warn!("failed to save transcript: {error}");
                 }
             }
@@ -422,6 +423,7 @@ fn chrono_now_iso8601() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::transcript::TranscriptStore;
     use std::path::PathBuf;
 
     fn fixtures_dir() -> PathBuf {
@@ -455,8 +457,14 @@ mod tests {
         let dictionary = DictionaryCache::empty();
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let transcript_store =
-            TranscriptStore::open(&dir.path().join("transcripts.db")).expect("open store");
+        let transcript_store = Arc::new(
+            TranscriptStore::open(&dir.path().join("transcripts.db")).expect("open store"),
+        );
+        let save_history = Arc::new(AtomicBool::new(true));
+        let transcript_writer = TranscriptWriter::new(
+            Arc::clone(&transcript_store),
+            Arc::clone(&save_history),
+        );
 
         let (state_tx, state_rx) = broadcast::channel::<PipelineState>(64);
         let (_command_tx, command_rx) = mpsc::channel::<PipelineCommand>(8);
@@ -468,7 +476,7 @@ mod tests {
             asr,
             llm,
             dictionary,
-            transcript_store,
+            transcript_writer,
             state_tx,
             command_rx,
             vad_model_path,
@@ -536,10 +544,10 @@ mod tests {
         pipeline.process_segment(samples).await.expect("process_segment failed");
 
         // Verify transcript was saved
-        let count = pipeline.transcript_store.count().expect("count");
+        let count = pipeline.transcript_writer.count().expect("count");
         assert!(count >= 1, "expected at least 1 transcript entry, got {count}");
 
-        let entries = pipeline.transcript_store.list(10, 0).expect("list");
+        let entries = pipeline.transcript_writer.list(10, 0).expect("list");
         let entry = &entries[0];
         assert!(
             !entry.polished_text.is_empty(),
@@ -571,7 +579,7 @@ mod tests {
         let silence = vec![0.0f32; 16000];
         pipeline.process_segment(silence).await.expect("process_segment failed");
 
-        let count = pipeline.transcript_store.count().expect("count");
+        let count = pipeline.transcript_writer.count().expect("count");
         assert_eq!(count, 0, "silent audio should produce no transcript entry");
     }
 
@@ -590,14 +598,14 @@ mod tests {
                 .expect("process_segment failed");
         }
 
-        let count = pipeline.transcript_store.count().expect("count");
+        let count = pipeline.transcript_writer.count().expect("count");
         assert_eq!(
             count, 3,
             "3 speech segments should produce 3 transcript entries, got {count}"
         );
 
         // Verify FIFO ordering (newest first in list)
-        let entries = pipeline.transcript_store.list(10, 0).expect("list");
+        let entries = pipeline.transcript_writer.list(10, 0).expect("list");
         assert_eq!(entries.len(), 3);
         // Each entry should have unique IDs
         let ids: std::collections::HashSet<&str> =
