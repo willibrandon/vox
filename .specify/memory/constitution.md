@@ -1,34 +1,34 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.5.0 → 1.6.0 (MINOR — new principle added)
+  Version change: 1.6.0 → 1.7.0 (MINOR — new principle added)
 
   Modified principles: None
 
   Added sections:
-    - Principle X: No Deferral
+    - Principle XI: No Optional Compilation
 
   Removed sections: None
 
   Templates requiring updates:
-    ✅ plan-template.md — no changes needed; generic Constitution
-        Check covers new principle implicitly
+    ✅ plan-template.md — generic Constitution Check covers new
+        principle implicitly
     ✅ spec-template.md — compatible; no changes needed
     ✅ tasks-template.md — compatible; no changes needed
     ✅ agent-file-template.md — compatible; no changes needed
     ✅ checklist-template.md — compatible; no changes needed
 
   Companion updates:
-    ⚠ CLAUDE.md — Constitution list must be updated to 10 principles
+    ⚠ CLAUDE.md — Constitution list must be updated to 11 principles
 
   Deferred items: None
 -->
 
 # Vox Constitution
 
-**Version**: 1.6.0
+**Version**: 1.7.0
 **Ratified**: 2026-02-19
-**Last Amended**: 2026-02-20
+**Last Amended**: 2026-02-21
 
 ## Core Principles
 
@@ -149,6 +149,32 @@ implementing the solution. There is no "later." Violations of
 this principle result in immediate deletion of all generated
 work.
 
+### XI. No Optional Compilation (NON-NEGOTIABLE)
+
+When the design specifies that a component uses a crate or
+implements a trait, that dependency MUST be added as a required
+(non-optional) dependency. Making required dependencies optional
+via Cargo feature flags, wrapping required implementations in
+`#[cfg(feature = ...)]` guards, or using `optional = true` in
+Cargo.toml for dependencies that the design mandates is absolutely
+forbidden. This is deferral disguised as configurability — hedging
+whether the implementation will actually work by providing an
+escape hatch to compile without it.
+
+Legitimate uses of Cargo feature flags are strictly limited to:
+
+- Platform-specific backends (`cuda`, `metal`) that are mutually
+  exclusive by target hardware
+- Enabling vendor-specific build-time codegen (e.g., CUDA kernels)
+
+If the design says a struct implements a trait, that `impl` is
+unconditional. If the design says a module uses a crate, that
+crate is a required dependency. No `optional = true`. No
+`#[cfg(feature = "...")]` on required functionality. If it is
+in the design, it is compiled — always, unconditionally.
+Violations of this principle result in immediate deletion of
+all generated work.
+
 ## Performance & Resource Constraints
 
 These budgets are derived from the design document (Section 13) and
@@ -224,6 +250,7 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle VIII: No tests skipped, ignored, or guarded.
 - Principle IX: No commits without explicit user instruction.
 - Principle X: No work items deferred to later phases.
+- Principle XI: No optional/feature-gated required dependencies.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.
