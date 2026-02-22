@@ -118,7 +118,18 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 
 ## Spec-Kit Workflow
 
-Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 10 principles before implementation begins.
+Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 11 principles before implementation begins.
+
+## Active Technologies
+
+- Rust 2024 edition (1.85+) + rusqlite 0.38 (bundled SQLite ≥3.45), parking_lot (RwLock), serde/serde_json (import/export), anyhow, tracing — all already in vox_core/Cargo.toml (010-custom-dictionary)
+- SQLite (vox.db — shared with transcripts table, created by Feature 009) (010-custom-dictionary)
+
+## Recent Changes
+
+- 010-custom-dictionary: Added Rust 2024 edition (1.85+) + rusqlite 0.38 (bundled SQLite ≥3.45), parking_lot (RwLock), serde/serde_json (import/export), anyhow, tracing — all already in vox_core/Cargo.toml
+- 009-app-state-settings: Added VoxState as GPUI Global, JSON settings with atomic write, SQLite transcript history
+- 008-model-management: Added model registry, concurrent downloading with SHA-256 verification, GGUF/GGML/ONNX format detection
 
 # Rust coding guidelines
 
