@@ -159,8 +159,7 @@ impl DictionaryCache {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let trimmed = joined.trim().to_string();
-        trimmed
+        joined.trim().to_string()
     }
 
     /// Format the top N dictionary entries by frequency as a string

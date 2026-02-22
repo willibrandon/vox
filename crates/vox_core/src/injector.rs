@@ -150,6 +150,7 @@ mod tests {
         // by confirming inject_text completes without panic.
         let _result = inject_text("  \t\n");
         // Additionally verify the language guarantee that makes this work:
-        assert!(!"  \t\n".is_empty(), "whitespace is not empty");
+        let whitespace: &str = "  \t\n";
+        assert!(!whitespace.is_empty(), "whitespace is not empty");
     }
 }

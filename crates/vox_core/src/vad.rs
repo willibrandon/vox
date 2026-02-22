@@ -361,11 +361,11 @@ mod tests {
         // Speak for 30s+ (938 windows at 32ms = 30,016ms)
         let mut force_event = None;
         for _ in 0..938 {
-            if let Some(event) = sm.update(0.8) {
-                if matches!(event, VadEvent::ForceSegment { .. }) {
-                    force_event = Some(event);
-                    break;
-                }
+            if let Some(event) = sm.update(0.8)
+                && matches!(event, VadEvent::ForceSegment { .. })
+            {
+                force_event = Some(event);
+                break;
             }
         }
 
@@ -392,10 +392,10 @@ mod tests {
         // Now silence for 500ms+ to trigger end
         let mut got_speech_end = false;
         for _ in 0..16 {
-            if let Some(event) = sm.update(0.1) {
-                if matches!(event, VadEvent::SpeechEnd { .. }) {
-                    got_speech_end = true;
-                }
+            if let Some(event) = sm.update(0.1)
+                && matches!(event, VadEvent::SpeechEnd { .. })
+            {
+                got_speech_end = true;
             }
         }
 

@@ -58,6 +58,7 @@ impl Pipeline {
     ///   orchestrator task on the main thread (not from spawn_blocking).
     ///
     /// `command_rx` receives control commands (Stop) from the PipelineController.
+    #[allow(clippy::too_many_arguments)] // orchestrator needs all pipeline components wired in
     pub fn new(
         asr: AsrEngine,
         llm: PostProcessor,

@@ -113,7 +113,7 @@ pub fn is_likely_command(raw_text: &str) -> bool {
         .trim_start_matches("uh ")
         .trim_start_matches("like ")
         .trim();
-    COMMAND_TRIGGERS.iter().any(|phrase| cleaned == *phrase)
+    COMMAND_TRIGGERS.contains(&cleaned)
 }
 
 /// Detect the "hey vox" wake word at the start of the transcript.
@@ -133,7 +133,7 @@ pub fn detect_wake_word(text: &str) -> Option<&str> {
             Some(c) if c.is_ascii_alphanumeric() => return None,
             _ => {}
         }
-        let remaining = after.trim_start_matches(|c: char| c == ',' || c == ' ');
+        let remaining = after.trim_start_matches([',', ' ']);
         Some(remaining)
     } else {
         None

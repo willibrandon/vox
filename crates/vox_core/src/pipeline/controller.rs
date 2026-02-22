@@ -18,20 +18,15 @@ use super::state::PipelineCommand;
 ///
 /// Determines how hotkey events map to pipeline start/stop. The default is
 /// HoldToTalk, which is the most intuitive for first-time users.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum ActivationMode {
     /// Hold hotkey to record, release to stop and process.
+    #[default]
     HoldToTalk,
     /// Press once to start, press again to stop.
     Toggle,
     /// Double-press to enter continuous mode, single press to exit.
     HandsFree,
-}
-
-impl Default for ActivationMode {
-    fn default() -> Self {
-        Self::HoldToTalk
-    }
 }
 
 impl ActivationMode {

@@ -101,11 +101,11 @@ impl AudioCapture {
             Some(name) => {
                 let mut found = None;
                 for d in host.input_devices().context("failed to list input devices")? {
-                    if let Ok(desc) = d.description() {
-                        if desc.name() == name {
-                            found = Some(d);
-                            break;
-                        }
+                    if let Ok(desc) = d.description()
+                        && desc.name() == name
+                    {
+                        found = Some(d);
+                        break;
                     }
                 }
                 found.with_context(|| format!("input device not found: {name}"))?
@@ -260,11 +260,11 @@ impl AudioCapture {
             Some(name) => {
                 let mut found = None;
                 for d in host.input_devices().context("failed to list input devices")? {
-                    if let Ok(desc) = d.description() {
-                        if desc.name() == name {
-                            found = Some(d);
-                            break;
-                        }
+                    if let Ok(desc) = d.description()
+                        && desc.name() == name
+                    {
+                        found = Some(d);
+                        break;
                     }
                 }
                 found.with_context(|| format!("input device not found: {name}"))?

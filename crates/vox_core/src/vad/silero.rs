@@ -41,15 +41,15 @@ fn init_ort_runtime() -> Result<()> {
     }
 
     // Production: next to the executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let exe_path = exe_dir.join(ORT_LIB_NAME);
-            if exe_path.exists() {
-                ort::init_from(&exe_path)
-                    .map(|_| ())
-                    .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", exe_path.display()))?;
-                return Ok(());
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        let exe_path = exe_dir.join(ORT_LIB_NAME);
+        if exe_path.exists() {
+            ort::init_from(&exe_path)
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", exe_path.display()))?;
+            return Ok(());
         }
     }
 
@@ -109,7 +109,7 @@ impl SileroVad {
 
         Ok(Self {
             session,
-            hidden_state: vec![0.0f32; 2 * 1 * 128],
+            hidden_state: vec![0.0f32; 256], // shape [2, 1, 128]
             context: vec![0.0f32; CONTEXT_SAMPLES],
             sample_rate: 16000,
         })

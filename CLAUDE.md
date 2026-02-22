@@ -117,7 +117,7 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 
 ## Spec-Kit Workflow
 
-Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 9 principles before implementation begins.
+Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 10 principles before implementation begins.
 
 # Rust coding guidelines
 

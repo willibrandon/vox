@@ -11,6 +11,7 @@ impl AudioRingBuffer {
     ///
     /// The producer is moved into the audio capture callback, and the consumer
     /// is read from on the processing thread. `capacity` is in f32 samples.
+    #[allow(clippy::new_ret_no_self)] // factory method intentionally returns split pair, not Self
     pub fn new(capacity: usize) -> (HeapProd<f32>, HeapCons<f32>) {
         let rb = HeapRb::<f32>::new(capacity);
         rb.split()
