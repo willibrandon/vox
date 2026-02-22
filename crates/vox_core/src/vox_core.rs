@@ -9,3 +9,4 @@ pub mod config;
 pub mod models;
 pub mod hotkey;
 pub mod state;
+pub mod logging;

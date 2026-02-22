@@ -12,4 +12,5 @@ gpui.workspace = true
 vox_core = { path = "../vox_core" }
 serde.workspace = true
 parking_lot.workspace = true
+tracing.workspace = true
 smallvec = { version = "1.11", features = ["union"] }

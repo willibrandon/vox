@@ -21,10 +21,10 @@
 
 **Purpose**: Add new dependencies and declare the new logging module.
 
-- [ ] T001 Add `tracing-appender = "0.2"` to `[workspace.dependencies]` in Cargo.toml (root)
-- [ ] T002 [P] Add `tracing-appender.workspace = true` to `[dependencies]` in crates/vox_core/Cargo.toml (logging.rs lives in vox_core)
-- [ ] T003 [P] Add `pub mod logging;` declaration to crates/vox_core/src/vox_core.rs
-- [ ] T004 [P] Add `tray-icon = "0.19"` and `global-hotkey = "0.6"` to `[dependencies]` in crates/vox/Cargo.toml (main.rs uses these directly for system tray and hotkey setup)
+- [X] T001 Add `tracing-appender = "0.2"` to `[workspace.dependencies]` in Cargo.toml (root)
+- [X] T002 [P] Add `tracing-appender.workspace = true` to `[dependencies]` in crates/vox_core/Cargo.toml (logging.rs lives in vox_core)
+- [X] T003 [P] Add `pub mod logging;` declaration to crates/vox_core/src/vox_core.rs
+- [X] T004 [P] Add `tray-icon = "0.19"` and `global-hotkey = "0.6"` to `[dependencies]` in crates/vox/Cargo.toml (main.rs uses these directly for system tray and hotkey setup)
 
 ---
 
@@ -36,8 +36,8 @@
 
 **Independent Test**: Create `VoxTheme::dark()`, verify all 28 HSLA values are in 0.0..=1.0 range, verify `overlay_bg.a < 1.0`. Verify spacing constants are ordered XS < SM < MD < LG < XL.
 
-- [ ] T005 [P] [US5] Implement VoxTheme struct, ThemeColors struct with 28 color fields, `impl Global for VoxTheme`, and `VoxTheme::dark()` constructor with all dark theme HSLA values per data-model.md, plus `#[cfg(test)]` tests (test_theme_colors_valid, test_overlay_bg_transparent) in crates/vox_ui/src/theme.rs
-- [ ] T006 [P] [US5] Implement `spacing` sub-module (XS/SM/MD/LG/XL Pixels constants), `radius` sub-module (SM/MD/LG/PILL), `size` sub-module (OVERLAY_WIDTH/OVERLAY_HEIGHT/SETTINGS_WIDTH/SETTINGS_HEIGHT), plus `#[cfg(test)]` tests (test_spacing_scale, test_radius_scale, test_overlay_dimensions) in crates/vox_ui/src/layout.rs
+- [X] T005 [P] [US5] Implement VoxTheme struct, ThemeColors struct with 28 color fields, `impl Global for VoxTheme`, and `VoxTheme::dark()` constructor with all dark theme HSLA values per data-model.md, plus `#[cfg(test)]` tests (test_theme_colors_valid, test_overlay_bg_transparent) in crates/vox_ui/src/theme.rs
+- [X] T006 [P] [US5] Implement `spacing` sub-module (XS/SM/MD/LG/XL Pixels constants), `radius` sub-module (SM/MD/LG/PILL), `size` sub-module (OVERLAY_WIDTH/OVERLAY_HEIGHT/SETTINGS_WIDTH/SETTINGS_HEIGHT), plus `#[cfg(test)]` tests (test_spacing_scale, test_radius_scale, test_overlay_dimensions) in crates/vox_ui/src/layout.rs
 
 **Checkpoint**: `cargo test -p vox_ui` — theme and layout tests pass.
 
@@ -51,7 +51,7 @@
 
 **Independent Test**: Call `log_dir()` and verify path contains "com.vox.app". Create temp directory with dated log files, call `cleanup_old_logs()`, verify only files >7 days old are deleted.
 
-- [ ] T007 [US6] Implement `LoggingGuard` struct wrapping `WorkerGuard`, `pub fn init_logging() -> LoggingGuard` with daily `RollingFileAppender` + non-blocking writer + env-filter (VOX_LOG > RUST_LOG > default), `pub fn log_dir() -> PathBuf` with platform-conditional paths, `pub fn cleanup_old_logs(dir: &Path, retention_days: u32)` with date-based file scanning, plus `#[cfg(test)]` tests (test_log_dir_platform, test_cleanup_old_logs) in crates/vox_core/src/logging.rs
+- [X] T007 [US6] Implement `LoggingGuard` struct wrapping `WorkerGuard`, `pub fn init_logging() -> LoggingGuard` with daily `RollingFileAppender` + non-blocking writer + env-filter (VOX_LOG > RUST_LOG > default), `pub fn log_dir() -> PathBuf` with platform-conditional paths, `pub fn cleanup_old_logs(dir: &Path, retention_days: u32)` with date-based file scanning, plus `#[cfg(test)]` tests (test_log_dir_platform, test_cleanup_old_logs) in crates/vox_core/src/logging.rs
 
 **Checkpoint**: `cargo test -p vox_core --features cuda` — logging tests pass.
 
@@ -63,7 +63,7 @@
 
 **Independent Test**: Verify `actions!` macro compiles, `register_actions()` and `register_key_bindings()` accept `&mut App`.
 
-- [ ] T008 [US3] Implement `actions!(vox, [ToggleRecording, StopRecording, ToggleOverlay, OpenSettings, Quit, CopyLastTranscript, ClearHistory])`, `register_actions(cx: &mut App)` with handlers for Quit (cx.quit()), ToggleRecording, OpenSettings (placeholder log), and `register_key_bindings(cx: &mut App)` with platform-conditional ctrl/cmd bindings (ToggleOverlay, OpenSettings, Quit) in crates/vox_ui/src/key_bindings.rs
+- [X] T008 [US3] Implement `actions!(vox, [ToggleRecording, StopRecording, ToggleOverlay, OpenSettings, Quit, CopyLastTranscript, ClearHistory])`, `register_actions(cx: &mut App)` with handlers for Quit (cx.quit()), ToggleRecording, OpenSettings (placeholder log), and `register_key_bindings(cx: &mut App)` with platform-conditional ctrl/cmd bindings (ToggleOverlay, OpenSettings, Quit) in crates/vox_ui/src/key_bindings.rs
 
 **Checkpoint**: `cargo build -p vox_ui` — key_bindings module compiles without warnings.
 
@@ -77,7 +77,7 @@
 
 **Depends on**: US5 (T005, T006) for VoxTheme and layout size constants.
 
-- [ ] T009 [US1] Implement `OverlayHud` struct, `OverlayHud::new(cx: &mut Context<Self>)`, and `impl Render for OverlayHud` that reads `cx.global::<VoxState>().readiness()` and `cx.global::<VoxTheme>()`, displays status text ("Downloading models...", "Loading pipeline...", "Ready") with appropriate theme status colors, uses `overlay_bg` for background, and sizes to `OVERLAY_WIDTH x OVERLAY_HEIGHT` in crates/vox_ui/src/overlay_hud.rs
+- [X] T009 [US1] Implement `OverlayHud` struct, `OverlayHud::new(cx: &mut Context<Self>)`, and `impl Render for OverlayHud` that reads `cx.global::<VoxState>().readiness()` and `cx.global::<VoxTheme>()`, displays status text ("Downloading models...", "Loading pipeline...", "Ready") with appropriate theme status colors, uses `overlay_bg` for background, and sizes to `OVERLAY_WIDTH x OVERLAY_HEIGHT` in crates/vox_ui/src/overlay_hud.rs
 
 **Checkpoint**: `cargo build -p vox_ui` — overlay HUD module compiles without warnings.
 
@@ -87,7 +87,7 @@
 
 **Goal**: Tray icon assets for 4 application states, embedded in the binary.
 
-- [ ] T010 [US4] Create four 32x32 RGBA tray icon PNGs — tray-idle.png (gray), tray-listening.png (green), tray-processing.png (blue), tray-error.png (red) — as solid colored squares matching VoxTheme status colors, generated programmatically via the `image` crate (dev-dependency) or hand-crafted, saved to assets/icons/ and embedded via `include_bytes!`
+- [X] T010 [US4] Create four 32x32 RGBA tray icon PNGs — tray-idle.png (gray), tray-listening.png (green), tray-processing.png (blue), tray-error.png (red) — as solid colored squares matching VoxTheme status colors, generated programmatically via the `image` crate (dev-dependency) or hand-crafted, saved to assets/icons/ and embedded via `include_bytes!`
 
 **Checkpoint**: Icon files exist at assets/icons/ and are valid 32x32 RGBA PNGs.
 
@@ -99,10 +99,10 @@
 
 **Depends on**: ALL previous phases (T001–T010).
 
-- [ ] T011 [US1] Implement `main()` function skeleton in crates/vox/src/main.rs — call `init_logging()` (hold guard), `Application::new().run()`, inside run callback: compute platform-specific data directory via `dirs::data_local_dir().unwrap().join("com.vox.app")` (Windows) or equivalent macOS path, create `VoxState::new(&data_dir)` and `VoxTheme::dark()` as globals via `cx.set_global()`, call `register_actions(cx)` and `register_key_bindings(cx)`, implement `open_overlay_window(cx)` using `WindowKind::PopUp` + `WindowBackgroundAppearance::Transparent` + `TitlebarOptions { appears_transparent: true }` + `Bounds::centered()` + `focus: false` + `is_resizable: false`, register `window.on_window_should_close` with deferred quit, call `cx.activate(true)`
-- [ ] T012 [US3] Add `setup_global_hotkey(cx: &mut App)` function to crates/vox/src/main.rs — create `GlobalHotKeyManager`, register CapsLock hotkey from `Settings::activation_hotkey`, spawn crossbeam `GlobalHotKeyEvent::receiver()` polling task (50ms timer) that dispatches ToggleRecording action on press, log warning if registration fails
-- [ ] T013 [US4] Add `setup_system_tray(cx: &mut App)` function to crates/vox/src/main.rs — build `Menu` with Toggle Recording / Settings / Quit items, create `TrayIconBuilder` with idle icon from `include_bytes!`, tooltip "Vox — Voice Dictation", spawn crossbeam `MenuEvent::receiver()` polling task (50ms timer, combined with hotkey polling) that dispatches matching actions
-- [ ] T014 [US2] Add `async fn initialize_pipeline(mut cx: AsyncApp)` to crates/vox/src/main.rs — check missing models via `check_missing_models()`, if missing set readiness to `Downloading` and call `ModelDownloader::download_missing()`, then set readiness to `Loading` and load pipeline components (VAD/ASR/LLM), then set readiness to `Ready`; on failure, add `Error { message: String }` variant to `AppReadiness` enum in crates/vox_core/src/state.rs if not already present, and set readiness to `Error` with descriptive message; wire into main() via `cx.spawn(|cx| async move { initialize_pipeline(cx).await }).detach()`
+- [X] T011 [US1] Implement `main()` function skeleton in crates/vox/src/main.rs — call `init_logging()` (hold guard), `Application::new().run()`, inside run callback: compute platform-specific data directory via `dirs::data_local_dir().unwrap().join("com.vox.app")` (Windows) or equivalent macOS path, create `VoxState::new(&data_dir)` and `VoxTheme::dark()` as globals via `cx.set_global()`, call `register_actions(cx)` and `register_key_bindings(cx)`, implement `open_overlay_window(cx)` using `WindowKind::PopUp` + `WindowBackgroundAppearance::Transparent` + `TitlebarOptions { appears_transparent: true }` + `Bounds::centered()` + `focus: false` + `is_resizable: false`, register `window.on_window_should_close` with deferred quit, call `cx.activate(true)`
+- [X] T012 [US3] Add `setup_global_hotkey(cx: &mut App)` function to crates/vox/src/main.rs — create `GlobalHotKeyManager`, register CapsLock hotkey from `Settings::activation_hotkey`, spawn crossbeam `GlobalHotKeyEvent::receiver()` polling task (50ms timer) that dispatches ToggleRecording action on press, log warning if registration fails
+- [X] T013 [US4] Add `setup_system_tray(cx: &mut App)` function to crates/vox/src/main.rs — build `Menu` with Toggle Recording / Settings / Quit items, create `TrayIconBuilder` with idle icon from `include_bytes!`, tooltip "Vox — Voice Dictation", spawn crossbeam `MenuEvent::receiver()` polling task (50ms timer, combined with hotkey polling) that dispatches matching actions
+- [X] T014 [US2] Add `async fn initialize_pipeline(mut cx: AsyncApp)` to crates/vox/src/main.rs — check missing models via `check_missing_models()`, if missing set readiness to `Downloading` and call `ModelDownloader::download_missing()`, then set readiness to `Loading` and load pipeline components (VAD/ASR/LLM), then set readiness to `Ready`; on failure, add `Error { message: String }` variant to `AppReadiness` enum in crates/vox_core/src/state.rs if not already present, and set readiness to `Error` with descriptive message; wire into main() via `cx.spawn(|cx| async move { initialize_pipeline(cx).await }).detach()`
 
 **Checkpoint**: `cargo build -p vox --features vox_core/cuda` compiles without warnings. Application launches and shows a window.
 
@@ -112,10 +112,10 @@
 
 **Purpose**: Validation and quality assurance across all stories.
 
-- [ ] T015 Run `cargo build -p vox --features vox_core/cuda` and verify zero compiler warnings in crates/vox/src/main.rs
-- [ ] T016 Run `cargo build -p vox_ui` and verify zero compiler warnings across theme.rs, layout.rs, key_bindings.rs, overlay_hud.rs
-- [ ] T017 Run `cargo test -p vox_ui` and `cargo test -p vox_core --features cuda` to verify all unit tests pass (theme, layout, logging)
-- [ ] T018 Validate quickstart.md scenarios VS-001 through VS-004 (theme colors valid, layout constants ordered, log directory platform, log retention cleanup) via test execution
+- [X] T015 Run `cargo build -p vox --features vox_core/cuda` and verify zero compiler warnings in crates/vox/src/main.rs
+- [X] T016 Run `cargo build -p vox_ui` and verify zero compiler warnings across theme.rs, layout.rs, key_bindings.rs, overlay_hud.rs
+- [X] T017 Run `cargo test -p vox_ui` and `cargo test -p vox_core --features cuda` to verify all unit tests pass (theme, layout, logging)
+- [X] T018 Validate quickstart.md scenarios VS-001 through VS-004 (theme colors valid, layout constants ordered, log directory platform, log retention cleanup) via test execution
 
 ---
 

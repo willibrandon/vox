@@ -121,17 +121,16 @@ Use `/vox.commit` command. Conventional commits (`type(scope): message`), impera
 Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`. Every plan must pass a Constitution Check against all 11 principles before implementation begins.
 
 ## Active Technologies
-- Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), tray-icon 0.19, global-hotkey 0.6, tracing 0.1, tracing-subscriber 0.3, tracing-appender 0.2 (NEW), dirs 5 (011-gpui-app-shell)
+- Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), tray-icon 0.19, global-hotkey 0.6, png 0.17, ctrlc 3.4, tracing 0.1, tracing-subscriber 0.3, tracing-appender 0.2, dirs 5 (011-gpui-app-shell)
 - rusqlite 0.38 (existing — vox.db), JSON settings (existing — settings.json) (011-gpui-app-shell)
-
-- Rust 2024 edition (1.85+) + rusqlite 0.38 (bundled SQLite ≥3.45), parking_lot (RwLock), serde/serde_json (import/export), anyhow, tracing — all already in vox_core/Cargo.toml (010-custom-dictionary)
-- SQLite (vox.db — shared with transcripts table, created by Feature 009) (010-custom-dictionary)
+- parking_lot (RwLock), serde/serde_json, anyhow, tracing — all already in vox_core/Cargo.toml
 
 ## Recent Changes
 
-- 010-custom-dictionary: Added Rust 2024 edition (1.85+) + rusqlite 0.38 (bundled SQLite ≥3.45), parking_lot (RwLock), serde/serde_json (import/export), anyhow, tracing — all already in vox_core/Cargo.toml
-- 009-app-state-settings: Added VoxState as GPUI Global, JSON settings with atomic write, SQLite transcript history
-- 008-model-management: Added model registry, concurrent downloading with SHA-256 verification, GGUF/GGML/ONNX format detection
+- 011-gpui-app-shell: GPUI application shell with overlay HUD, system tray (PNG icons via `include_bytes!`), global hotkey (CapsLock default), structured logging (daily rotation, 7-day retention), action dispatch (hotkey/tray → `cx.dispatch_action`), async pipeline init (downloads models, loads ASR + LLM onto GPU via `spawn_blocking`, stores in VoxState, only then sets Ready). VoxState gained `asr_engine`/`llm_processor` fields with take-once pattern for orchestrator handoff.
+- 010-custom-dictionary: SQLite-backed word mappings with in-memory cache, case-insensitive substitution, LLM hint integration, JSON import/export
+- 009-app-state-settings: VoxState as GPUI Global, JSON settings with atomic write, SQLite transcript history
+- 008-model-management: Model registry, concurrent downloading with SHA-256 verification, GGUF/GGML/ONNX format detection
 
 # Rust coding guidelines
 

@@ -15,8 +15,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 
+use crate::asr::AsrEngine;
 use crate::config::Settings;
 use crate::dictionary::DictionaryCache;
+use crate::llm::PostProcessor;
 use crate::models::DownloadProgress;
 use crate::pipeline::state::PipelineState;
 use crate::pipeline::transcript::{TranscriptEntry, TranscriptStore};
@@ -44,6 +46,11 @@ pub enum AppReadiness {
     },
     /// Full pipeline operational. Ready for dictation.
     Ready,
+    /// Pipeline initialization failed with a descriptive error message.
+    Error {
+        /// Human-readable error description.
+        message: String,
+    },
 }
 
 /// Central application state accessible via GPUI's Global trait.
@@ -69,6 +76,10 @@ pub struct VoxState {
     save_history: Arc<AtomicBool>,
     /// Platform-specific application data directory.
     data_dir: PathBuf,
+    /// Loaded ASR engine (Whisper on GPU). Set during pipeline init, taken by orchestrator.
+    asr_engine: RwLock<Option<AsrEngine>>,
+    /// Loaded LLM post-processor (Qwen on GPU). Set during pipeline init, taken by orchestrator.
+    llm_processor: RwLock<Option<PostProcessor>>,
 }
 
 impl gpui::Global for VoxState {}
@@ -115,6 +126,8 @@ impl VoxState {
             pipeline_state: RwLock::new(PipelineState::Idle),
             tokio_runtime,
             data_dir: data_dir.to_path_buf(),
+            asr_engine: RwLock::new(None),
+            llm_processor: RwLock::new(None),
         })
     }
 
@@ -227,6 +240,40 @@ impl VoxState {
     /// clone — CRUD changes are immediately visible to substitution.
     pub fn dictionary(&self) -> &DictionaryCache {
         &self.dictionary
+    }
+
+    // --- Pipeline components ---
+
+    /// Store a loaded ASR engine for pipeline use.
+    ///
+    /// Called during pipeline initialization after the Whisper model is loaded
+    /// onto the GPU. The orchestrator retrieves it via [`take_asr_engine`].
+    pub fn set_asr_engine(&self, engine: AsrEngine) {
+        *self.asr_engine.write() = Some(engine);
+    }
+
+    /// Take the loaded ASR engine, leaving `None` behind.
+    ///
+    /// Returns the engine if it was previously set via [`set_asr_engine`].
+    /// After this call, the slot is empty until set again.
+    pub fn take_asr_engine(&self) -> Option<AsrEngine> {
+        self.asr_engine.write().take()
+    }
+
+    /// Store a loaded LLM post-processor for pipeline use.
+    ///
+    /// Called during pipeline initialization after the Qwen model is loaded
+    /// onto the GPU. The orchestrator retrieves it via [`take_llm_processor`].
+    pub fn set_llm_processor(&self, processor: PostProcessor) {
+        *self.llm_processor.write() = Some(processor);
+    }
+
+    /// Take the loaded LLM post-processor, leaving `None` behind.
+    ///
+    /// Returns the processor if it was previously set via [`set_llm_processor`].
+    /// After this call, the slot is empty until set again.
+    pub fn take_llm_processor(&self) -> Option<PostProcessor> {
+        self.llm_processor.write().take()
     }
 
     /// Create a transcript writer for pipeline use.
