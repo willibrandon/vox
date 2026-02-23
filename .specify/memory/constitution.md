@@ -1,34 +1,39 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.7.0 → 1.8.0 (MINOR — Principle X expanded)
+  Version change: 1.8.0 → 1.9.0 (MINOR — Principle XII added)
 
-  Modified principles:
-    - Principle X: No Deferral — expanded to explicitly cover all
-      output artifacts (tables, reports, coverage summaries, analysis)
-      and ban hedging language. Added exhaustive list of forbidden
-      hedging phrases.
+  Modified principles: None
 
-  Added sections: None
+  Added sections:
+    - Principle XII: No Blame Attribution (NON-NEGOTIABLE)
+      Forbids claiming any encountered problem is a "pre-existing
+      issue," deflecting ownership to other features/sessions, or
+      using provenance as a reason not to fix something. If Claude
+      encounters a broken thing, Claude fixes it — no commentary
+      about whose fault it is.
+
   Removed sections: None
 
   Templates requiring updates:
     ✅ plan-template.md — no changes needed; Constitution Check
-        already references Principle X
+        uses dynamic gate list from constitution
     ✅ spec-template.md — no changes needed
     ✅ tasks-template.md — no changes needed
     ✅ agent-file-template.md — no changes needed
     ✅ checklist-template.md — no changes needed
 
   Companion updates:
-    ✅ CLAUDE.md — Principle 10 summary updated to match
+    ⚠ CLAUDE.md — Principle 12 summary needs adding to
+        constitution list (manual follow-up)
 
-  Follow-up TODOs: None
+  Follow-up TODOs:
+    - Update CLAUDE.md constitution summary to include Principle 12
 -->
 
 # Vox Constitution
 
-**Version**: 1.8.0
+**Version**: 1.9.0
 **Ratified**: 2026-02-19
 **Last Amended**: 2026-02-22
 
@@ -194,6 +199,39 @@ in the design, it is compiled — always, unconditionally.
 Violations of this principle result in immediate deletion of
 all generated work.
 
+### XII. No Blame Attribution (NON-NEGOTIABLE)
+
+Claude MUST NEVER claim that a problem is a "pre-existing issue,"
+attribute a bug to a different feature, blame another session, or
+use the provenance of a defect as a reason not to fix it. When
+Claude encounters something broken — a corrupt file, a missing
+validation, a logic error, an incomplete implementation — Claude
+fixes it. Period. No commentary about when, where, or by whom the
+problem was introduced.
+
+The following are absolutely forbidden:
+
+- Saying "this is a pre-existing issue" or any variation
+- Saying "this was introduced by Feature NNN" or blaming another
+  feature, task, session, or prior implementation
+- Saying "this is not something introduced by the current work"
+  as justification for not fixing it
+- Saying "this is a bug in [other module/crate/feature]" without
+  immediately fixing it
+- Using provenance or attribution as a reason to defer, skip, or
+  deprioritize a fix
+- Diagnosing a problem and then suggesting the user fix it
+  themselves because it "belongs to" a different scope
+- Any form of "not my problem" deflection regardless of how the
+  problem originated
+
+If Claude sees broken code, Claude fixes it. If Claude encounters
+a corrupt file, Claude repairs or replaces it. If Claude discovers
+a missing validation that causes a runtime failure, Claude adds the
+validation. The origin of the problem is irrelevant — only the fix
+matters. Violations of this principle result in immediate deletion
+of all generated work.
+
 ## Performance & Resource Constraints
 
 These budgets are derived from the design document (Section 13) and
@@ -270,6 +308,7 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle IX: No commits without explicit user instruction.
 - Principle X: No work items deferred to later phases.
 - Principle XI: No optional/feature-gated required dependencies.
+- Principle XII: No blame attribution or ownership deflection.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.
