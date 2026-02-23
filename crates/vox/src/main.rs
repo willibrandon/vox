@@ -4,27 +4,62 @@
 //! global state ([`VoxState`] and [`VoxTheme`]), registers actions and
 //! keybindings, opens the overlay HUD window, configures the system tray
 //! and global hotkey, and kicks off background pipeline initialization.
+//! When models are loaded and Ready, the ToggleRecording action creates
+//! an AudioCapture → VAD → ASR → LLM → TextInjection pipeline that
+//! processes speech and injects polished text into the focused application.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use global_hotkey::hotkey::{Code, HotKey};
+use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
-use gpui::{
-    size, App, AppContext as _, Application, AsyncApp, Bounds, TitlebarOptions,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
-};
+use gpui::{App, Application, AsyncApp};
+use parking_lot::Mutex;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 
 use vox_core::asr::AsrEngine;
+use vox_core::audio::{AudioCapture, AudioConfig};
 use vox_core::llm::PostProcessor;
 use vox_core::logging::init_logging;
 use vox_core::models::{self, check_missing_models, DownloadProgress, ModelDownloader};
+use vox_core::pipeline::{Pipeline, PipelineCommand, PipelineState};
 use vox_core::state::{ensure_data_dirs, AppReadiness, VoxState};
-use vox_ui::key_bindings::{register_actions, register_key_bindings, OpenSettings, ToggleRecording};
-use vox_ui::layout::size as layout_size;
-use vox_ui::overlay_hud::OverlayHud;
+use vox_core::vad::VadConfig;
+use vox_ui::key_bindings::{
+    register_actions, register_key_bindings, OpenSettings, StopRecording, ToggleRecording,
+};
+use vox_ui::overlay_hud::{open_overlay_window, OverlayDisplayState};
 use vox_ui::theme::VoxTheme;
+
+/// Holds the command channel sender for an active recording session.
+///
+/// When dropped, the channel closes, signaling the pipeline's run loop
+/// to break and execute its shutdown sequence (stop VAD thread, drain
+/// buffered segments, broadcast Idle).
+struct ActiveRecording {
+    // Held alive to keep the mpsc channel open. Dropping this sender closes
+    // the channel, causing Pipeline::run()'s select! to break and shut down.
+    #[allow(dead_code)]
+    command_tx: tokio::sync::mpsc::Sender<PipelineCommand>,
+}
+
+/// Tracks whether a recording session is in progress.
+///
+/// Uses interior mutability (Mutex) because GPUI Globals are accessed
+/// through shared references. The Mutex is uncontended in practice — all
+/// access occurs on the single GPUI foreground thread.
+///
+/// The `generation` counter prevents stale state-forwarding tasks from
+/// clearing a newer session's handle. Each `start_recording` increments
+/// the counter; the task only clears `active` if its captured generation
+/// still matches.
+struct RecordingSession {
+    active: Mutex<Option<ActiveRecording>>,
+    generation: AtomicU64,
+}
+
+impl gpui::Global for RecordingSession {}
 
 fn main() {
     let _guard = init_logging();
@@ -43,11 +78,26 @@ fn main() {
 fn run_app(cx: &mut App) -> anyhow::Result<()> {
     let data_dir = ensure_data_dirs()?;
     let state = VoxState::new(&data_dir)?;
+    let initial_readiness = state.readiness();
+    let initial_pipeline = state.pipeline_state();
     cx.set_global(state);
     cx.set_global(VoxTheme::dark());
 
+    // Initialize the reactive bridge before opening the overlay window
+    cx.set_global(OverlayDisplayState {
+        readiness: initial_readiness,
+        pipeline_state: initial_pipeline,
+    });
+
+    // Initialize recording session tracker (starts inactive)
+    cx.set_global(RecordingSession {
+        active: Mutex::new(None),
+        generation: AtomicU64::new(0),
+    });
+
     register_actions(cx);
     register_key_bindings(cx);
+    register_pipeline_actions(cx);
 
     // Overlay HUD opens immediately — before models load, before GPU init
     open_overlay_window(cx)?;
@@ -64,37 +114,256 @@ fn run_app(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn open_overlay_window(cx: &mut App) -> anyhow::Result<()> {
-    let window_size = size(layout_size::OVERLAY_WIDTH, layout_size::OVERLAY_HEIGHT);
-    let bounds = Bounds::centered(None, window_size, cx);
+/// Register ToggleRecording and StopRecording handlers with full pipeline wiring.
+///
+/// These handlers manage the AudioCapture → VAD → ASR → LLM → Injection
+/// lifecycle. Called after `register_actions()` to override the no-op
+/// handlers from vox_ui with real pipeline management.
+fn register_pipeline_actions(cx: &mut App) {
+    cx.on_action(|_: &ToggleRecording, cx| {
+        let readiness = cx.global::<VoxState>().readiness();
+        if !matches!(readiness, AppReadiness::Ready) {
+            tracing::warn!("cannot toggle recording: app not ready");
+            return;
+        }
 
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(TitlebarOptions {
-            title: None,
-            appears_transparent: true,
-            traffic_light_position: None,
-        }),
-        focus: false,
-        show: true,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        is_resizable: false,
-        window_background: WindowBackgroundAppearance::Transparent,
-        ..Default::default()
+        let is_recording = cx.global::<RecordingSession>().active.lock().is_some();
+
+        if is_recording {
+            stop_recording(cx);
+        } else if let Err(err) = start_recording(cx) {
+            tracing::error!(%err, "failed to start recording");
+            cx.global::<VoxState>().set_pipeline_state(PipelineState::Error {
+                message: err.to_string(),
+            });
+            update_overlay_state(cx);
+        }
+    });
+
+    cx.on_action(|_: &StopRecording, cx| {
+        let is_recording = cx.global::<RecordingSession>().active.lock().is_some();
+        if is_recording {
+            stop_recording(cx);
+        }
+    });
+}
+
+/// Start a new recording session: AudioCapture → VAD → ASR → LLM → Injection.
+///
+/// Creates all pipeline components, starts audio capture, spawns the
+/// orchestrator on the tokio runtime, and starts a GPUI foreground task
+/// that forwards pipeline state broadcasts to the overlay HUD.
+fn start_recording(cx: &mut App) -> anyhow::Result<()> {
+    // Read all needed values from VoxState in one borrow scope
+    let (device_name, vad_config, asr, llm, dictionary, transcript_writer, tokio_handle) = {
+        let state = cx.global::<VoxState>();
+
+        let settings = state.settings();
+        let device_name = settings.input_device.clone();
+        let vad_config = VadConfig {
+            threshold: settings.vad_threshold,
+            min_speech_ms: settings.min_speech_ms,
+            min_silence_ms: settings.min_silence_ms,
+            max_speech_ms: settings.max_segment_ms,
+            ..VadConfig::default()
+        };
+        drop(settings);
+
+        let asr = state
+            .clone_asr_engine()
+            .ok_or_else(|| anyhow::anyhow!("ASR engine not loaded"))?;
+        let llm = state
+            .clone_llm_processor()
+            .ok_or_else(|| anyhow::anyhow!("LLM processor not loaded"))?;
+        let dictionary = state.dictionary().clone();
+        let transcript_writer = state.transcript_writer();
+        let tokio_handle = state.tokio_runtime().handle().clone();
+
+        (
+            device_name,
+            vad_config,
+            asr,
+            llm,
+            dictionary,
+            transcript_writer,
+            tokio_handle,
+        )
     };
 
-    cx.open_window(options, |window, cx| {
-        // Deferred quit prevents Windows WM_ACTIVATE race condition (Tusk pattern)
-        window.on_window_should_close(cx, |_window, cx| {
-            cx.defer(|cx| cx.quit());
-            false
-        });
-        cx.new(|cx| OverlayHud::new(cx))
-    })?;
+    let vad_model_path = models::model_path(models::MODELS[0].filename)?;
 
-    tracing::info!("overlay HUD window opened");
+    // Create and start audio capture on the GPUI foreground thread.
+    // AudioCapture is NOT Send — it stays on this thread, kept alive by
+    // the GPUI spawn task below.
+    let audio_config = AudioConfig {
+        device_name,
+        ..AudioConfig::default()
+    };
+    let mut capture = AudioCapture::new(&audio_config)?;
+    capture.start()?;
+    let consumer = capture
+        .take_consumer()
+        .ok_or_else(|| anyhow::anyhow!("audio consumer already taken"))?;
+    let native_rate = capture.native_sample_rate();
+    let rms_atomic = capture.rms_atomic();
+
+    tracing::info!(
+        device = capture.device_name(),
+        native_rate,
+        "audio capture started"
+    );
+
+    // Create pipeline channels
+    let (state_tx, _) = tokio::sync::broadcast::channel::<PipelineState>(64);
+    let (command_tx, command_rx) = tokio::sync::mpsc::channel::<PipelineCommand>(16);
+
+    // Create pipeline with all components wired in
+    let mut pipeline = Pipeline::new(
+        asr,
+        llm,
+        dictionary,
+        transcript_writer,
+        state_tx,
+        command_rx,
+        vad_model_path,
+        vad_config,
+    );
+
+    // Start pipeline: spawns VAD thread, broadcasts Listening
+    pipeline.start(consumer, native_rate)?;
+    let mut state_rx = pipeline.subscribe();
+
+    tracing::info!("pipeline started, spawning orchestrator on tokio");
+
+    // Spawn pipeline.run() on tokio (async loop with spawn_blocking for GPU work)
+    tokio_handle.spawn(async move {
+        if let Err(err) = pipeline.run().await {
+            tracing::error!(%err, "pipeline orchestrator exited with error");
+        }
+        tracing::info!("pipeline orchestrator shut down");
+    });
+
+    // Store command_tx for stop signaling; increment generation so stale
+    // forwarding tasks from a previous session won't clear this session's handle
+    let generation = cx.global::<RecordingSession>().generation.fetch_add(1, Ordering::Relaxed) + 1;
+    *cx.global::<RecordingSession>().active.lock() = Some(ActiveRecording { command_tx });
+
+    // Update UI state to Listening
+    cx.global::<VoxState>().set_pipeline_state(PipelineState::Listening);
+    update_overlay_state(cx);
+
+    // Spawn GPUI foreground task that:
+    // 1. Holds AudioCapture alive (dropping it stops the cpal stream)
+    // 2. Forwards real-time RMS amplitude to VoxState for waveform display
+    // 3. Polls state broadcasts and forwards them to the overlay
+    // 4. Cleans up RecordingSession when the pipeline finishes (generation-gated)
+    let executor = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let _capture = capture;
+
+        // Helper: returns true if this session is still the current one.
+        // Must be called inside cx.update closures where &App is available.
+        let is_current_gen = |cx: &App| -> bool {
+            cx.global::<RecordingSession>()
+                .generation
+                .load(Ordering::Relaxed)
+                == generation
+        };
+
+        loop {
+            executor.timer(Duration::from_millis(16)).await;
+
+            // Forward real-time RMS from audio callback to VoxState.
+            // Generation check and write happen atomically in the same
+            // cx.update closure — no window for a stale task to overwrite
+            // the current session's state.
+            let rms = f32::from_bits(rms_atomic.load(Ordering::Relaxed));
+            let is_current = cx.update(|cx| {
+                if !is_current_gen(cx) {
+                    return false;
+                }
+                cx.global::<VoxState>().set_latest_rms(rms);
+                true
+            });
+            if !is_current {
+                return;
+            }
+
+            loop {
+                match state_rx.try_recv() {
+                    Ok(pipeline_state) => {
+                        let is_idle = matches!(pipeline_state, PipelineState::Idle);
+                        cx.update(|cx| {
+                            if is_current_gen(cx) {
+                                cx.global::<VoxState>()
+                                    .set_pipeline_state(pipeline_state);
+                                update_overlay_state(cx);
+                            }
+                        });
+                        if is_idle {
+                            cx.update(|cx| {
+                                if is_current_gen(cx) {
+                                    cx.global::<RecordingSession>()
+                                        .active
+                                        .lock()
+                                        .take();
+                                }
+                            });
+                            return;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                        cx.update(|cx| {
+                            if is_current_gen(cx) {
+                                cx.global::<VoxState>()
+                                    .set_pipeline_state(PipelineState::Idle);
+                                cx.global::<RecordingSession>()
+                                    .active
+                                    .lock()
+                                    .take();
+                                update_overlay_state(cx);
+                            }
+                        });
+                        return;
+                    }
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                        tracing::debug!(skipped, "state broadcast receiver lagged");
+                        continue;
+                    }
+                }
+            }
+        }
+    })
+    .detach();
+
     Ok(())
+}
+
+/// Stop the current recording session.
+///
+/// Drops the command channel sender, closing the channel. The pipeline's
+/// `run()` loop sees the closed channel, breaks, and executes its shutdown
+/// sequence: sets stop flag → drains buffered segments → joins VAD thread →
+/// broadcasts `PipelineState::Idle`. The GPUI state-forwarding task picks
+/// up the Idle broadcast and cleans up the session.
+fn stop_recording(cx: &mut App) {
+    let active = cx.global::<RecordingSession>().active.lock().take();
+    if active.is_some() {
+        tracing::info!("recording stop requested — pipeline shutting down");
+    }
+}
+
+/// Updates the OverlayDisplayState bridge to match the current VoxState.
+///
+/// Must be called after every `VoxState::set_readiness()` or
+/// `VoxState::set_pipeline_state()` to trigger overlay re-rendering.
+fn update_overlay_state(cx: &mut App) {
+    let state = cx.global::<VoxState>();
+    cx.set_global(OverlayDisplayState {
+        readiness: state.readiness(),
+        pipeline_state: state.pipeline_state(),
+    });
 }
 
 fn setup_global_hotkey(cx: &mut App) {
@@ -107,8 +376,13 @@ fn setup_global_hotkey(cx: &mut App) {
     };
 
     let hotkey_str = cx.global::<VoxState>().settings().activation_hotkey.clone();
-    let code = parse_hotkey_code(&hotkey_str);
-    let hotkey = HotKey::new(None, code);
+    let hotkey = match hotkey_str.parse::<HotKey>() {
+        Ok(hk) => hk,
+        Err(err) => {
+            tracing::error!(?err, hotkey = %hotkey_str, "failed to parse hotkey string");
+            return;
+        }
+    };
 
     if let Err(err) = manager.register(hotkey) {
         tracing::warn!(?err, hotkey = %hotkey_str, "failed to register global hotkey");
@@ -210,6 +484,7 @@ async fn initialize_pipeline(cx: &mut AsyncApp) {
             cx.global::<VoxState>().set_readiness(AppReadiness::Error {
                 message: err.to_string(),
             });
+            update_overlay_state(cx);
         });
     }
 }
@@ -232,6 +507,7 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     whisper_progress: DownloadProgress::Pending,
                     llm_progress: DownloadProgress::Pending,
                 });
+            update_overlay_state(cx);
         });
 
         let downloader = ModelDownloader::new();
@@ -245,6 +521,7 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .set_readiness(AppReadiness::Loading {
                 stage: "Verifying models...".into(),
             });
+        update_overlay_state(cx);
     });
 
     if !models::all_models_present()? {
@@ -257,6 +534,7 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .set_readiness(AppReadiness::Loading {
                 stage: "Loading ASR model...".into(),
             });
+        update_overlay_state(cx);
     });
 
     let whisper_path = models::model_path(models::MODELS[1].filename)?;
@@ -274,6 +552,7 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .set_readiness(AppReadiness::Loading {
                 stage: "Loading LLM model...".into(),
             });
+        update_overlay_state(cx);
     });
 
     let llm_path = models::model_path(models::MODELS[2].filename)?;
@@ -284,34 +563,11 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| {
         cx.global::<VoxState>().set_llm_processor(llm_processor);
         cx.global::<VoxState>().set_readiness(AppReadiness::Ready);
+        update_overlay_state(cx);
     });
 
     tracing::info!("pipeline initialization complete");
     Ok(())
-}
-
-fn parse_hotkey_code(key: &str) -> Code {
-    match key.to_lowercase().as_str() {
-        "capslock" | "caps_lock" | "capital" => Code::CapsLock,
-        "f1" => Code::F1,
-        "f2" => Code::F2,
-        "f3" => Code::F3,
-        "f4" => Code::F4,
-        "f5" => Code::F5,
-        "f6" => Code::F6,
-        "f7" => Code::F7,
-        "f8" => Code::F8,
-        "f9" => Code::F9,
-        "f10" => Code::F10,
-        "f11" => Code::F11,
-        "f12" => Code::F12,
-        "space" => Code::Space,
-        "escape" | "esc" => Code::Escape,
-        other => {
-            tracing::warn!(key = other, "unknown hotkey code, defaulting to CapsLock");
-            Code::CapsLock
-        }
-    }
 }
 
 /// Decode an embedded PNG file into a tray [`Icon`].

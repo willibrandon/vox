@@ -81,6 +81,10 @@ pub struct AudioCapture {
     device_name: String,
     native_sample_rate: u32,
     error_flag: Arc<AtomicBool>,
+    /// Real-time RMS amplitude stored as f32 bits in an AtomicU32.
+    /// Updated by the cpal audio callback (real-time safe: pure arithmetic,
+    /// relaxed atomic store, no allocations or locks).
+    rms_atomic: Arc<std::sync::atomic::AtomicU32>,
     consumer: HeapCons<f32>,
     // Kept alive so the producer can be moved into the next stream's callback
     producer: Option<ringbuf::HeapProd<f32>>,
@@ -138,6 +142,7 @@ impl AudioCapture {
             device_name,
             native_sample_rate,
             error_flag: Arc::new(AtomicBool::new(false)),
+            rms_atomic: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             consumer,
             producer: Some(producer),
             channels,
@@ -158,8 +163,26 @@ impl AudioCapture {
 
         let error_flag = self.error_flag.clone();
         let channels = self.channels as usize;
+        let rms_sink = self.rms_atomic.clone();
 
         let data_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
+            // Compute RMS on incoming audio (real-time safe: pure arithmetic,
+            // relaxed atomic, no allocations, no locks)
+            if !data.is_empty() {
+                let sum_sq: f32 = if channels <= 1 {
+                    data.iter().map(|s| s * s).sum()
+                } else {
+                    data.iter().step_by(channels).map(|s| s * s).sum()
+                };
+                let count = if channels <= 1 {
+                    data.len()
+                } else {
+                    data.len() / channels
+                };
+                let rms = (sum_sq / count as f32).sqrt();
+                rms_sink.store(rms.to_bits(), Ordering::Relaxed);
+            }
+
             if channels <= 1 {
                 producer.push_slice(data);
             } else {
@@ -226,6 +249,15 @@ impl AudioCapture {
         use ringbuf::traits::Split;
         let (_, dummy_consumer) = ringbuf::HeapRb::<f32>::new(1).split();
         Some(std::mem::replace(&mut self.consumer, dummy_consumer))
+    }
+
+    /// Returns a shared handle to the real-time RMS amplitude value.
+    ///
+    /// The atomic stores f32 bits via `to_bits()`. Read with
+    /// `f32::from_bits(arc.load(Ordering::Relaxed))`. Updated on every
+    /// cpal audio callback (~5-10ms intervals depending on buffer size).
+    pub fn rms_atomic(&self) -> Arc<std::sync::atomic::AtomicU32> {
+        self.rms_atomic.clone()
     }
 
     /// Returns `true` if the device has been disconnected or the stream

@@ -46,6 +46,22 @@ lto = true
 [profile.dev.build-override]
 debug-assertions = false
 
+# Optimize ML-heavy crates in dev builds. These contain Rust-side FFI
+# wrappers and numeric code for GPU inference. At opt-level 0 (dev default),
+# unoptimized memory management, tensor setup, and result extraction add
+# measurable latency — up to 10-40x slower than optimized builds.
+[profile.dev.package.whisper-rs]
+opt-level = 3
+
+[profile.dev.package.llama-cpp-2]
+opt-level = 3
+
+[profile.dev.package.ort]
+opt-level = 3
+
+[profile.dev.package.rubato]
+opt-level = 3
+
 [profile.release]
 opt-level = "s"
 lto = true

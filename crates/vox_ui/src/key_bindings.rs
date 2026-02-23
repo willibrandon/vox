@@ -6,6 +6,7 @@
 
 use gpui::{actions, App, KeyBinding};
 
+
 actions!(
     vox,
     [
@@ -16,6 +17,10 @@ actions!(
         Quit,
         CopyLastTranscript,
         ClearHistory,
+        CopyInjectedText,
+        RetryDownload,
+        OpenModelFolder,
+        DismissOverlay,
     ]
 );
 
@@ -25,12 +30,12 @@ actions!(
 /// VoxState methods for state transitions. Non-implemented handlers log
 /// the dispatch for development visibility.
 pub fn register_actions(cx: &mut App) {
-    cx.on_action(|_: &ToggleRecording, _cx| {
-        tracing::info!("ToggleRecording dispatched");
-    });
-    cx.on_action(|_: &StopRecording, _cx| {
-        tracing::info!("StopRecording dispatched");
-    });
+    // ToggleRecording and StopRecording handlers are registered in main.rs
+    // where they have access to the full pipeline lifecycle (AudioCapture,
+    // Pipeline orchestrator, tokio runtime). Registering no-op handlers here
+    // ensures the actions are known to GPUI's action system.
+    cx.on_action(|_: &ToggleRecording, _cx| {});
+    cx.on_action(|_: &StopRecording, _cx| {});
     cx.on_action(|_: &ToggleOverlay, _cx| {
         tracing::info!("ToggleOverlay dispatched");
     });
@@ -45,6 +50,18 @@ pub fn register_actions(cx: &mut App) {
     });
     cx.on_action(|_: &ClearHistory, _cx| {
         tracing::info!("ClearHistory dispatched");
+    });
+    cx.on_action(|_: &CopyInjectedText, _cx| {
+        tracing::info!("CopyInjectedText dispatched");
+    });
+    cx.on_action(|_: &RetryDownload, _cx| {
+        tracing::info!("RetryDownload dispatched");
+    });
+    cx.on_action(|_: &OpenModelFolder, _cx| {
+        tracing::info!("OpenModelFolder dispatched");
+    });
+    cx.on_action(|_: &DismissOverlay, _cx| {
+        tracing::info!("DismissOverlay dispatched");
     });
 }
 

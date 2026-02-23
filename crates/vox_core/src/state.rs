@@ -76,6 +76,8 @@ pub struct VoxState {
     save_history: Arc<AtomicBool>,
     /// Platform-specific application data directory.
     data_dir: PathBuf,
+    /// Most recent RMS amplitude from the audio pipeline, for waveform visualization.
+    latest_rms: RwLock<f32>,
     /// Loaded ASR engine (Whisper on GPU). Set during pipeline init, taken by orchestrator.
     asr_engine: RwLock<Option<AsrEngine>>,
     /// Loaded LLM post-processor (Qwen on GPU). Set during pipeline init, taken by orchestrator.
@@ -126,6 +128,7 @@ impl VoxState {
             pipeline_state: RwLock::new(PipelineState::Idle),
             tokio_runtime,
             data_dir: data_dir.to_path_buf(),
+            latest_rms: RwLock::new(0.0),
             asr_engine: RwLock::new(None),
             llm_processor: RwLock::new(None),
         })
@@ -222,6 +225,24 @@ impl VoxState {
         *self.pipeline_state.write() = state;
     }
 
+    // --- Audio RMS ---
+
+    /// Returns the most recent RMS amplitude value from the audio pipeline.
+    ///
+    /// Value is in [0.0, 1.0]. Used by the overlay waveform visualizer
+    /// to display real-time audio levels during the Listening state.
+    pub fn latest_rms(&self) -> f32 {
+        *self.latest_rms.read()
+    }
+
+    /// Updates the latest RMS amplitude value.
+    ///
+    /// Called by the audio processing thread after computing RMS on each
+    /// audio window. Values are clamped to [0.0, 1.0].
+    pub fn set_latest_rms(&self, rms: f32) {
+        *self.latest_rms.write() = rms.clamp(0.0, 1.0);
+    }
+
     // --- Accessors ---
 
     /// Get the application data directory path.
@@ -260,6 +281,14 @@ impl VoxState {
         self.asr_engine.write().take()
     }
 
+    /// Clone the loaded ASR engine without removing it from state.
+    ///
+    /// AsrEngine is Arc-based, so cloning is cheap (reference count increment).
+    /// Returns `None` if no engine has been set or it was previously taken.
+    pub fn clone_asr_engine(&self) -> Option<AsrEngine> {
+        self.asr_engine.read().clone()
+    }
+
     /// Store a loaded LLM post-processor for pipeline use.
     ///
     /// Called during pipeline initialization after the Qwen model is loaded
@@ -274,6 +303,14 @@ impl VoxState {
     /// After this call, the slot is empty until set again.
     pub fn take_llm_processor(&self) -> Option<PostProcessor> {
         self.llm_processor.write().take()
+    }
+
+    /// Clone the loaded LLM post-processor without removing it from state.
+    ///
+    /// PostProcessor is Arc-based, so cloning is cheap (reference count increment).
+    /// Returns `None` if no processor has been set or it was previously taken.
+    pub fn clone_llm_processor(&self) -> Option<PostProcessor> {
+        self.llm_processor.read().clone()
     }
 
     /// Create a transcript writer for pipeline use.

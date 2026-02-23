@@ -9,3 +9,4 @@ mod processor;
 mod prompts;
 
 pub use processor::{PostProcessor, ProcessorOutput, VoiceCommand};
+pub use prompts::{detect_wake_word, is_likely_command};

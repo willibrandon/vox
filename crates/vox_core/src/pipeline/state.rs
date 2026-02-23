@@ -37,6 +37,18 @@ pub enum PipelineState {
         /// Human-readable error description.
         message: String,
     },
+
+    /// Text injection failed. The polished text is preserved for clipboard recovery.
+    ///
+    /// This state persists until the user clicks Copy (→ Idle) or presses the
+    /// hotkey to start a new dictation (→ Listening). Uncopied text is lost
+    /// on hotkey press.
+    InjectionFailed {
+        /// The polished text that failed to inject (available for Copy).
+        polished_text: String,
+        /// Human-readable error description.
+        error: String,
+    },
 }
 
 /// Commands sent from PipelineController to Pipeline via mpsc channel.

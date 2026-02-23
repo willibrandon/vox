@@ -16,6 +16,7 @@ tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+parking_lot.workspace = true
 tray-icon = "0.19"
 global-hotkey = "0.6"
 png = "0.17"

@@ -34,9 +34,15 @@ pub struct VadConfig {
     pub min_silence_ms: u32,
     /// Maximum speech duration (ms) before force-segmenting to cap memory usage.
     pub max_speech_ms: u32,
-    /// Audio padding (ms) prepended and appended to detected speech boundaries
-    /// so the ASR engine has enough acoustic context for accurate recognition.
-    pub speech_pad_ms: u32,
+    /// Audio pre-padding (ms) captured before speech onset via a circular buffer.
+    /// The VAD may fire SpeechStart several hundred milliseconds after the actual
+    /// start of speech (soft onsets like nasals /m/, /n/). A larger pre-buffer
+    /// recovers the missed beginning, preventing ASR hallucinations.
+    pub pre_pad_ms: u32,
+    /// Audio post-padding (ms) collected after SpeechEnd before emitting the
+    /// segment. Captures trailing sounds and gives the ASR engine end-of-speech
+    /// context without adding excessive latency.
+    pub post_pad_ms: u32,
     /// Silero VAD input window size in samples. Fixed at 512 for 16 kHz (32ms).
     pub window_size_samples: u32,
 }
@@ -48,7 +54,8 @@ impl Default for VadConfig {
             min_speech_ms: 250,
             min_silence_ms: 500,
             max_speech_ms: 30_000,
-            speech_pad_ms: 100,
+            pre_pad_ms: 300,
+            post_pad_ms: 100,
             window_size_samples: 512,
         }
     }

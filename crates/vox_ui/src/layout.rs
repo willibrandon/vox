@@ -45,6 +45,12 @@ pub mod size {
     pub const SETTINGS_WIDTH: Pixels = px(800.0);
     /// Settings panel height (600px).
     pub const SETTINGS_HEIGHT: Pixels = px(600.0);
+    /// Waveform visualizer width (340px — slightly inset from overlay).
+    pub const WAVEFORM_WIDTH: Pixels = px(340.0);
+    /// Waveform visualizer height (40px).
+    pub const WAVEFORM_HEIGHT: Pixels = px(40.0);
+    /// Download progress bar height (6px).
+    pub const PROGRESS_BAR_HEIGHT: Pixels = px(6.0);
 }
 
 #[cfg(test)]

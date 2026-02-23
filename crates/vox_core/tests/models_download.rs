@@ -7,21 +7,20 @@
 use std::time::Duration;
 
 use tempfile::TempDir;
-use vox_core::models::{self, DownloadEvent, ModelDownloader, set_model_dir_override};
+use vox_core::models::{self, DownloadEvent, ModelDownloader};
 
 /// Download the VAD model to a tempdir, verify checksum matches and file exists
 /// at the final path (not .tmp).
 #[tokio::test]
 async fn test_download_small_model() {
     let tmp_dir = TempDir::new().expect("create tempdir");
-    let _guard = set_model_dir_override(tmp_dir.path().to_path_buf());
+    let dir = tmp_dir.path().to_path_buf();
 
     let vad = &models::MODELS[0]; // Silero VAD, ~2.3 MB
-    let dir = models::model_dir().expect("model_dir should succeed");
     let final_path = dir.join(vad.filename);
     let tmp_path = dir.join(format!("{}.tmp", vad.filename));
 
-    let downloader = ModelDownloader::new();
+    let downloader = ModelDownloader::with_model_dir(dir);
 
     let result: anyhow::Result<()> = tokio::time::timeout(
         Duration::from_secs(120),
@@ -47,7 +46,6 @@ async fn test_download_small_model() {
 #[tokio::test]
 async fn test_concurrent_download() {
     let tmp_dir = TempDir::new().expect("create tempdir");
-    let _guard = set_model_dir_override(tmp_dir.path().to_path_buf());
 
     // Two ModelInfo entries pointing at the same small file but with different filenames
     let model_a = models::ModelInfo {
@@ -65,7 +63,7 @@ async fn test_concurrent_download() {
         size_bytes: models::MODELS[0].size_bytes,
     };
 
-    let downloader = ModelDownloader::new();
+    let downloader = ModelDownloader::with_model_dir(tmp_dir.path().to_path_buf());
     let mut receiver = downloader.subscribe();
 
     // Spawn download of both models
@@ -145,7 +143,6 @@ async fn test_concurrent_download() {
 #[tokio::test]
 async fn test_resume_after_failure() {
     let tmp_dir = TempDir::new().expect("create tempdir");
-    let _guard = set_model_dir_override(tmp_dir.path().to_path_buf());
 
     let fake_model = models::ModelInfo {
         name: "Test Fake Model",
@@ -155,7 +152,7 @@ async fn test_resume_after_failure() {
         size_bytes: 100,
     };
 
-    let downloader = ModelDownloader::new();
+    let downloader = ModelDownloader::with_model_dir(tmp_dir.path().to_path_buf());
     let mut receiver = downloader.subscribe();
 
     // Download should fail (DNS/HTTP error, not checksum mismatch)

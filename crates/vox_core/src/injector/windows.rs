@@ -17,7 +17,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VIRTUAL_KEY,
+    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU,
+    VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_SHIFT, VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -79,11 +80,52 @@ fn is_foreground_elevated(hwnd: HWND) -> Result<bool> {
     }
 }
 
+/// Release all modifier keys (Ctrl, Shift, Alt, Space) before text injection.
+///
+/// When the user activates dictation with a modifier hotkey (e.g. Ctrl+Shift+Space),
+/// those keys may still be physically held or their key-up events may not have been
+/// processed when injection starts. This causes the target application to interpret
+/// injected characters as keyboard shortcuts (Ctrl+Shift+B instead of 'B'), silently
+/// swallowing text. Sending explicit key-up events for all modifiers clears this state.
+fn release_modifier_keys() {
+    let modifiers = [
+        VK_CONTROL,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_SHIFT,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+        VK_SPACE,
+    ];
+
+    let inputs: Vec<INPUT> = modifiers
+        .iter()
+        .map(|&vk| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    ..Default::default()
+                },
+            },
+        })
+        .collect();
+
+    unsafe {
+        SendInput(&inputs, mem::size_of::<INPUT>() as i32);
+    }
+}
+
 /// Inject text into the focused application via `SendInput` with `KEYEVENTF_UNICODE`.
 ///
 /// Strips null bytes to avoid C API truncation, checks for focused window and
-/// UIPI elevation, then builds an INPUT array with key-down + key-up pairs for
-/// each UTF-16 code unit and sends them in a single `SendInput` call.
+/// UIPI elevation, releases any held modifier keys, then builds an INPUT array
+/// with key-down + key-up pairs for each UTF-16 code unit and sends them in a
+/// single `SendInput` call.
 pub(super) fn inject_text_impl(text: &str) -> InjectionResult {
     // Strip null bytes that could truncate C-level string processing
     let clean: String = text.chars().filter(|&c| c != '\0').collect();
@@ -119,6 +161,11 @@ pub(super) fn inject_text_impl(text: &str) -> InjectionResult {
         }
     }
 
+    // Release any held modifier keys before injecting text. Without this,
+    // hotkey modifiers (Ctrl+Shift from Ctrl+Shift+Space) cause the target
+    // app to interpret injected characters as keyboard shortcuts.
+    release_modifier_keys();
+
     let utf16: Vec<u16> = clean.encode_utf16().collect();
     let mut inputs: Vec<INPUT> = Vec::with_capacity(utf16.len() * 2);
 
@@ -152,10 +199,20 @@ pub(super) fn inject_text_impl(text: &str) -> InjectionResult {
     }
 
     let sent = unsafe { SendInput(&inputs, mem::size_of::<INPUT>() as i32) };
+    let expected = inputs.len() as u32;
 
     if sent == 0 {
         return InjectionResult::Blocked {
             reason: InjectionError::PlatformError("SendInput returned 0".to_string()),
+            text: text.to_string(),
+        };
+    }
+
+    if sent < expected {
+        return InjectionResult::Blocked {
+            reason: InjectionError::PlatformError(format!(
+                "SendInput partial: {sent}/{expected} events injected"
+            )),
             text: text.to_string(),
         };
     }

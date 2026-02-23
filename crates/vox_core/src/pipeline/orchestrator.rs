@@ -17,7 +17,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::asr::AsrEngine;
 use crate::dictionary::DictionaryCache;
 use crate::injector;
-use crate::llm::{PostProcessor, ProcessorOutput};
+use crate::llm::{PostProcessor, ProcessorOutput, detect_wake_word, is_likely_command};
 use crate::vad::{self, SpeechChunker, VadConfig, VadStateMachine};
 
 use super::state::{PipelineCommand, PipelineState};
@@ -245,8 +245,9 @@ impl Pipeline {
 
     /// Process a single speech segment through the full pipeline.
     ///
-    /// Flow: silent pre-check → ASR → dictionary substitution → focused app
-    /// detection → LLM post-processing → injection/command → transcript save.
+    /// Flow: silent pre-check → silence-pad → ASR → dictionary substitution →
+    /// focused app detection → LLM post-processing → injection/command →
+    /// transcript save.
     async fn process_segment(&mut self, segment: Vec<f32>) -> Result<()> {
         let start_time = Instant::now();
         let segment_len = segment.len() as u32;
@@ -259,13 +260,27 @@ impl Pipeline {
 
         self.broadcast(PipelineState::Processing { raw_text: None });
 
+        let segment_duration_ms = segment_len * 1000 / 16000;
+
+        // Prepend 200ms of silence before the speech segment. This gives
+        // Whisper's attention mechanism a "settle" window before the first
+        // phoneme arrives, improving recognition of word-initial sounds
+        // (especially soft onsets like nasals /m/, /n/).
+        let silence_pad_samples = (200 * 16000) / 1000; // 3200 samples
+        let mut padded_segment = Vec::with_capacity(silence_pad_samples + segment.len());
+        padded_segment.resize(silence_pad_samples, 0.0f32);
+        padded_segment.extend_from_slice(&segment);
+
         // ASR (GPU-bound) — run in spawn_blocking
+        let asr_start = Instant::now();
         let raw_text = tokio::task::spawn_blocking({
             let asr = self.asr.clone();
-            move || asr.transcribe(&segment)
+            move || asr.transcribe(&padded_segment)
         })
         .await
         .context("ASR task panicked")??;
+        let asr_ms = asr_start.elapsed().as_millis();
+        tracing::info!(asr_ms, segment_duration_ms, raw = %raw_text, "ASR completed");
 
         if raw_text.is_empty() {
             self.broadcast(PipelineState::Listening);
@@ -277,7 +292,9 @@ impl Pipeline {
         });
 
         // Dictionary substitution (fast, in-process)
+        let dict_start = Instant::now();
         let sub_result = self.dictionary.apply_substitutions(&raw_text);
+        let dict_ms = dict_start.elapsed().as_millis();
         if sub_result.text.is_empty() {
             self.broadcast(PipelineState::Listening);
             return Ok(());
@@ -293,47 +310,83 @@ impl Pipeline {
         // Get focused application name for tone adaptation
         let active_app = injector::get_focused_app_name();
 
-        // LLM post-processing (GPU-bound) — run in spawn_blocking
-        let hints = self.dictionary.top_hints(50);
-        let result: ProcessorOutput = tokio::task::spawn_blocking({
-            let llm = self.llm.clone();
-            let text = sub_result.text.clone();
-            let app = active_app.clone();
-            move || llm.process(&text, &hints, &app)
-        })
-        .await
-        .context("LLM task panicked")??;
+        // Fast-path: if the transcript is already clean (properly capitalized,
+        // punctuated, no fillers, no corrections, no commands), bypass the LLM
+        // entirely. Saves ~3 seconds of GPU inference for simple dictation.
+        let (polished, llm_ms) = if transcript_is_clean(&sub_result.text) {
+            tracing::info!(
+                text = %sub_result.text,
+                "LLM fast-path: transcript is clean, skipping LLM"
+            );
+            (sub_result.text.clone(), 0u128)
+        } else {
+            // LLM post-processing (GPU-bound) — run in spawn_blocking
+            let llm_start = Instant::now();
+            let hints = self.dictionary.top_hints(50);
+            let result: ProcessorOutput = tokio::task::spawn_blocking({
+                let llm = self.llm.clone();
+                let text = sub_result.text.clone();
+                let app = active_app.clone();
+                move || llm.process(&text, &hints, &app)
+            })
+            .await
+            .context("LLM task panicked")??;
+            let llm_elapsed = llm_start.elapsed().as_millis();
+            tracing::info!(llm_ms = llm_elapsed, "LLM post-processing completed");
 
-        match result {
-            ProcessorOutput::Text(polished) => {
-                self.broadcast(PipelineState::Injecting {
-                    polished_text: polished.clone(),
-                });
-
-                injector::inject_text(&polished);
-
-                // Save transcript (FR-014)
-                let duration_ms = segment_len * 1000 / 16000;
-                let latency_ms = start_time.elapsed().as_millis() as u32;
-                let entry = TranscriptEntry {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    raw_text,
-                    polished_text: polished,
-                    target_app: active_app,
-                    duration_ms,
-                    latency_ms,
-                    created_at: chrono_now_iso8601(),
-                };
-                if let Err(error) = self.transcript_writer.save(&entry) {
-                    tracing::warn!("failed to save transcript: {error}");
+            match result {
+                ProcessorOutput::Text(polished) => (polished, llm_elapsed),
+                ProcessorOutput::Command(cmd) => {
+                    // Voice commands are executed, not saved as transcripts (FR-016)
+                    if let Err(error) = injector::execute_command(&cmd) {
+                        tracing::warn!("failed to execute voice command: {error}");
+                    }
+                    self.broadcast(PipelineState::Listening);
+                    return Ok(());
                 }
             }
-            ProcessorOutput::Command(cmd) => {
-                // Voice commands are executed, not saved as transcripts (FR-016)
-                if let Err(error) = injector::execute_command(&cmd) {
-                    tracing::warn!("failed to execute voice command: {error}");
-                }
-            }
+        };
+
+        self.broadcast(PipelineState::Injecting {
+            polished_text: polished.clone(),
+        });
+
+        let inject_start = Instant::now();
+        let inject_result = injector::inject_text(&polished);
+        let inject_ms = inject_start.elapsed().as_millis();
+
+        let latency_ms = start_time.elapsed().as_millis() as u32;
+        tracing::info!(
+            asr_ms,
+            dict_ms,
+            llm_ms,
+            inject_ms,
+            latency_ms,
+            polished = %polished,
+            "segment processed"
+        );
+
+        if let injector::InjectionResult::Blocked { reason, text: failed_text } = inject_result {
+            tracing::error!(?reason, "text injection failed");
+            self.broadcast(PipelineState::InjectionFailed {
+                polished_text: failed_text,
+                error: format!("{reason:?}"),
+            });
+            return Ok(());
+        }
+
+        // Save transcript (FR-014)
+        let entry = TranscriptEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            raw_text,
+            polished_text: polished,
+            target_app: active_app,
+            duration_ms: segment_duration_ms,
+            latency_ms,
+            created_at: chrono_now_iso8601(),
+        };
+        if let Err(error) = self.transcript_writer.save(&entry) {
+            tracing::warn!("failed to save transcript: {error}");
         }
 
         self.broadcast(PipelineState::Listening);
@@ -363,6 +416,126 @@ fn is_silent(segment: &[f32]) -> bool {
     let sum_squares: f32 = segment.iter().map(|s| s * s).sum();
     let rms = (sum_squares / segment.len() as f32).sqrt();
     rms < 1e-3
+}
+
+/// Unambiguous filler words — always fillers in dictated speech, never
+/// legitimate content words. Excludes "like" and "so" which have valid
+/// non-filler uses ("I like pizza", "I think so").
+const FILLER_WORDS: &[&str] = &["um", "uh", "er", "ah", "hmm", "hm"];
+
+/// Multi-word filler phrases checked as substrings.
+const FILLER_PHRASES: &[&str] = &["you know", "i mean"];
+
+/// Course correction phrases that signal the speaker restarted mid-sentence.
+const CORRECTION_PHRASES: &[&str] = &[
+    "no wait",
+    "no actually",
+    "i meant",
+    "or rather",
+    "well actually",
+    "i said",
+];
+
+/// Check whether a transcript is already clean and can bypass LLM processing.
+///
+/// Returns `true` only when ALL of these conditions hold:
+/// 1. Not a voice command (would need JSON conversion)
+/// 2. No wake word prefix (would need command-emphasis routing)
+/// 3. First character is uppercase (proper capitalization)
+/// 4. Ends with sentence-ending punctuation (. ! ?)
+/// 5. Contains no unambiguous filler words (um, uh, er, ah, hmm)
+/// 6. Contains no filler phrases (you know, I mean)
+/// 7. Contains no course correction phrases (no wait, I meant, etc.)
+/// 8. Contains no stuttered/repeated consecutive words
+/// 9. Contains no self-correction dashes
+/// 10. Contains no spelled-out email/URL patterns (at ... dot)
+///
+/// Intentionally conservative — when in doubt, sends to LLM. A false
+/// negative (clean text goes to LLM) costs 3s latency. A false positive
+/// (dirty text bypasses LLM) produces incorrect output.
+fn transcript_is_clean(text: &str) -> bool {
+    let trimmed = text.trim();
+
+    // Fragments too short to evaluate — let LLM decide
+    if trimmed.len() < 2 {
+        return false;
+    }
+
+    // Strip trailing sentence punctuation for command/wake-word checks,
+    // since Whisper adds periods to commands ("Delete that." → "delete that")
+    let text_no_trailing_punct = trimmed.trim_end_matches(['.', '!', '?', ',']);
+
+    // Voice commands must go through LLM for JSON conversion
+    if is_likely_command(text_no_trailing_punct) {
+        return false;
+    }
+
+    // Wake word prefix needs command-emphasis routing
+    if detect_wake_word(trimmed).is_some() {
+        return false;
+    }
+
+    // Must start with an uppercase letter (proper capitalization)
+    match trimmed.chars().next() {
+        Some(c) if c.is_uppercase() => {}
+        _ => return false,
+    }
+
+    // Must end with sentence-ending punctuation
+    if !trimmed.ends_with('.') && !trimmed.ends_with('!') && !trimmed.ends_with('?') {
+        return false;
+    }
+
+    let lower = trimmed.to_lowercase();
+
+    // Strip punctuation from each word for filler/stutter matching.
+    // Whisper attaches commas/periods to words: "Um, I went" → ["um,", "i", "went"]
+    let words: Vec<String> = lower
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| c.is_ascii_punctuation()).to_string())
+        .collect();
+    let word_refs: Vec<&str> = words.iter().map(|w| w.as_str()).collect();
+
+    // Check for unambiguous single-word fillers
+    for filler in FILLER_WORDS {
+        if word_refs.contains(filler) {
+            return false;
+        }
+    }
+
+    // Check for multi-word filler phrases (check against punctuation-stripped text)
+    let stripped_lower: String = words.join(" ");
+    for phrase in FILLER_PHRASES {
+        if stripped_lower.contains(phrase) {
+            return false;
+        }
+    }
+
+    // Check for course correction phrases
+    for phrase in CORRECTION_PHRASES {
+        if stripped_lower.contains(phrase) {
+            return false;
+        }
+    }
+
+    // Check for stuttered/repeated consecutive words ("I I went", "the the store")
+    for window in word_refs.windows(2) {
+        if window[0] == window[1] {
+            return false;
+        }
+    }
+
+    // Check for self-correction dashes ("I went to the- I walked")
+    if trimmed.contains(" - ") || trimmed.contains("- ") || trimmed.ends_with('-') {
+        return false;
+    }
+
+    // Check for spelled-out email/URL patterns ("john at outlook dot com")
+    if stripped_lower.contains(" at ") && stripped_lower.contains(" dot ") {
+        return false;
+    }
+
+    true
 }
 
 /// Generate an ISO 8601 timestamp for the current time in UTC.
@@ -521,6 +694,89 @@ mod tests {
         // Just below threshold
         let quiet = vec![0.0009f32; 1000];
         assert!(is_silent(&quiet));
+    }
+
+    // --- transcript_is_clean tests ---
+
+    #[test]
+    fn test_clean_simple_sentence() {
+        assert!(transcript_is_clean("My name is Batman."));
+        assert!(transcript_is_clean("Hello world!"));
+        assert!(transcript_is_clean("Is this working?"));
+        assert!(transcript_is_clean("The quick brown fox jumps over the lazy dog."));
+    }
+
+    #[test]
+    fn test_clean_rejects_fillers() {
+        assert!(!transcript_is_clean("Um, I went to the store."));
+        assert!(!transcript_is_clean("I uh went to the store."));
+        assert!(!transcript_is_clean("So I went er to the store."));
+        assert!(!transcript_is_clean("I went to the store, ah yes."));
+        assert!(!transcript_is_clean("Hmm that sounds good."));
+    }
+
+    #[test]
+    fn test_clean_rejects_filler_phrases() {
+        assert!(!transcript_is_clean("I went, you know, to the store."));
+        assert!(!transcript_is_clean("I mean it was a good day."));
+    }
+
+    #[test]
+    fn test_clean_rejects_corrections() {
+        assert!(!transcript_is_clean("I went to the no wait I drove."));
+        assert!(!transcript_is_clean("Send it to John, or rather Jane."));
+        assert!(!transcript_is_clean("I meant the other one."));
+        assert!(!transcript_is_clean("I said it was good."));
+    }
+
+    #[test]
+    fn test_clean_rejects_missing_punctuation() {
+        assert!(!transcript_is_clean("My name is Batman"));
+        assert!(!transcript_is_clean("Hello world"));
+    }
+
+    #[test]
+    fn test_clean_rejects_missing_capitalization() {
+        assert!(!transcript_is_clean("my name is Batman."));
+        assert!(!transcript_is_clean("hello world!"));
+    }
+
+    #[test]
+    fn test_clean_rejects_stutters() {
+        assert!(!transcript_is_clean("I I went to the store."));
+        assert!(!transcript_is_clean("The the dog is here."));
+    }
+
+    #[test]
+    fn test_clean_rejects_dashes() {
+        assert!(!transcript_is_clean("I went to the- I walked to the store."));
+        assert!(!transcript_is_clean("Send it - no wait."));
+    }
+
+    #[test]
+    fn test_clean_rejects_commands() {
+        assert!(!transcript_is_clean("Delete that."));
+        assert!(!transcript_is_clean("Undo that."));
+        assert!(!transcript_is_clean("New line."));
+        assert!(!transcript_is_clean("Select all."));
+    }
+
+    #[test]
+    fn test_clean_rejects_wake_word() {
+        assert!(!transcript_is_clean("Hey Vox delete that."));
+        assert!(!transcript_is_clean("Hey vox, undo."));
+    }
+
+    #[test]
+    fn test_clean_rejects_email_patterns() {
+        assert!(!transcript_is_clean("Send it to john at outlook dot com."));
+    }
+
+    #[test]
+    fn test_clean_rejects_too_short() {
+        assert!(!transcript_is_clean(""));
+        assert!(!transcript_is_clean("A"));
+        assert!(!transcript_is_clean(" "));
     }
 
     #[test]

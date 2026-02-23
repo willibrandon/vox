@@ -42,6 +42,8 @@ impl VoxTheme {
                 status_success: hsla(0.35, 0.9, 0.55, 1.0),
                 status_error: hsla(0.0, 0.85, 0.6, 1.0),
                 status_downloading: hsla(0.12, 0.9, 0.6, 1.0),
+                status_loading: hsla(0.55, 0.7, 0.7, 1.0),
+                status_injection_failed: hsla(0.15, 0.9, 0.6, 1.0),
 
                 waveform_active: hsla(0.35, 0.9, 0.55, 1.0),
                 waveform_inactive: hsla(0.0, 0.0, 0.3, 1.0),
@@ -104,6 +106,10 @@ pub struct ThemeColors {
     pub status_error: Hsla,
     /// Orange — downloading state indicator.
     pub status_downloading: Hsla,
+    /// Blue (lighter) — loading state indicator.
+    pub status_loading: Hsla,
+    /// Amber/yellow — injection failed state indicator.
+    pub status_injection_failed: Hsla,
 
     /// Active waveform bar color.
     pub waveform_active: Hsla,
@@ -142,6 +148,7 @@ mod tests {
             c.accent, c.accent_hover,
             c.status_idle, c.status_listening, c.status_processing,
             c.status_success, c.status_error, c.status_downloading,
+            c.status_loading, c.status_injection_failed,
             c.waveform_active, c.waveform_inactive,
             c.button_primary_bg, c.button_primary_text,
             c.button_secondary_bg, c.button_secondary_text,

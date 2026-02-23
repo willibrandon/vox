@@ -12,14 +12,14 @@ use super::{VadConfig, VadEvent};
 /// ready for ASR transcription.
 ///
 /// Maintains a circular pre-buffer of recent audio so that when speech starts,
-/// the preceding context (100ms by default) is prepended to the segment. After
-/// speech ends, continues collecting post-padding samples before emitting.
+/// the preceding context (300ms by default) is prepended to the segment. After
+/// speech ends, continues collecting post-padding samples (100ms) before emitting.
 /// Force-segmented long speech includes a 1-second overlap for ASR stitching.
 pub struct SpeechChunker {
     config: VadConfig,
     /// Accumulated speech samples for the current segment.
     speech_buffer: Vec<f32>,
-    /// Circular buffer holding the last `speech_pad_ms` of audio for pre-padding.
+    /// Circular buffer holding the last `pre_pad_ms` of audio for pre-padding.
     pre_buffer: Vec<f32>,
     /// Current write position in the circular pre-buffer.
     pre_buffer_pos: usize,
@@ -32,11 +32,11 @@ pub struct SpeechChunker {
 impl SpeechChunker {
     /// Create a new chunker with the given configuration.
     ///
-    /// Initializes the circular pre-buffer to hold `speech_pad_ms` worth of
-    /// samples (1,600 samples at 100ms × 16 kHz) filled with silence.
+    /// Initializes the circular pre-buffer to hold `pre_pad_ms` worth of
+    /// samples (4,800 samples at 300ms × 16 kHz) filled with silence.
     pub fn new(config: VadConfig) -> Self {
         let pre_buffer_capacity =
-            (config.speech_pad_ms as usize * 16000) / 1000;
+            (config.pre_pad_ms as usize * 16000) / 1000;
         Self {
             speech_buffer: Vec::new(),
             pre_buffer: vec![0.0f32; pre_buffer_capacity],
@@ -94,7 +94,7 @@ impl SpeechChunker {
                 VadEvent::SpeechEnd { .. } => {
                     if self.is_accumulating {
                         self.post_pad_remaining =
-                            (self.config.speech_pad_ms * 16000) / 1000;
+                            (self.config.post_pad_ms * 16000) / 1000;
 
                         // If no post-padding is configured, emit immediately.
                         if self.post_pad_remaining == 0 && emitted_segment.is_none() {
@@ -198,20 +198,11 @@ mod tests {
             assert!(result.is_none(), "should not emit while speaking");
         }
 
-        // Verify accumulation: pre-buffer (1600) + SpeechStart window (512)
-        // + 3 additional windows (3 × 512 = 1536) = 3648
-        // But SpeechStart also extends from the current window already in
-        // the accumulation step (line 68), so actual is:
-        // pre_buffer(1600) + 4 windows via extend_from_slice(4 × 512 = 2048) = 3648
-        // Actually: on SpeechStart the first window IS accumulated (line 67-68
-        // runs before the event handler), so speech_buffer has:
-        //   extend_from_slice(512) from line 68? No — is_accumulating is false
-        //   at that point, so line 67 skips. Then SpeechStart sets
-        //   is_accumulating=true and prepends pre_buffer(1600).
-        //   Subsequent 3 feeds each add 512 via line 68.
-        //   Total = 1600 + 3*512 = 3136.
-        //
-        // Let's just verify it's growing by flushing.
+        // On SpeechStart: is_accumulating is false, so extend_from_slice skips.
+        // SpeechStart handler prepends pre_buffer (4800 samples at 300ms).
+        // Subsequent 3 feeds each add 512 via extend_from_slice.
+        // Total = 4800 + 3*512 = 6336.
+        // Just verify it's growing by flushing.
         let segment = chunker.flush();
         assert!(segment.is_some());
         let seg = segment.unwrap();
@@ -254,7 +245,7 @@ mod tests {
     #[test]
     fn test_chunker_padding() {
         let mut chunker = default_chunker();
-        let pad_samples = ms_to_samples(chunker.config.speech_pad_ms); // 1600
+        let pad_samples = ms_to_samples(chunker.config.pre_pad_ms); // 4800
 
         // Fill pre-buffer with recognizable data by feeding silence before speech
         let pre_fill = vec![0.1f32; 512];
@@ -290,7 +281,7 @@ mod tests {
         // The segment should be longer than just the raw speech windows
         // because it includes pre-padding + speech + post-padding.
         // Raw speech = SpeechStart window + 10 windows + SpeechEnd window = 12 × 512 = 6144
-        // With padding ≈ pre(1600) + speech(6144) + post(~1600) = ~9344
+        // With padding ≈ pre(4800) + speech(6144) + post(~1600) = ~12544
         let raw_speech_samples = (speech_windows + 2) * 512; // +2 for start/end windows
         assert!(
             seg.len() > raw_speech_samples,
@@ -299,9 +290,10 @@ mod tests {
             raw_speech_samples
         );
 
-        // Verify padding adds approximately 2 × pad_samples
+        // Verify padding adds approximately pre_pad + post_pad samples
         let padding_added = seg.len() - raw_speech_samples;
-        let expected_padding = pad_samples * 2;
+        let post_pad_samples = ms_to_samples(chunker.config.post_pad_ms);
+        let expected_padding = pad_samples + post_pad_samples;
         // Allow tolerance since post-pad countdown works in window-sized chunks
         assert!(
             padding_added > expected_padding / 2,

@@ -7434,6 +7434,7 @@ dependencies = [
  "ctrlc",
  "global-hotkey",
  "gpui",
+ "parking_lot",
  "png 0.17.16",
  "serde",
  "tokio",
@@ -7485,8 +7486,10 @@ dependencies = [
 name = "vox_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "parking_lot",
+ "raw-window-handle",
  "serde",
  "smallvec",
  "tracing",

@@ -148,7 +148,7 @@ impl Default for Settings {
             remove_fillers: true,
             course_correction: true,
             punctuation: true,
-            activation_hotkey: "CapsLock".into(),
+            activation_hotkey: "Ctrl+Shift+Space".into(),
             hold_to_talk: true,
             hands_free_double_press: true,
             overlay_position: OverlayPosition::TopCenter,
@@ -178,7 +178,10 @@ impl Settings {
             .with_context(|| format!("failed to read settings file at {}", path.display()))?;
 
         match serde_json::from_str::<Self>(&contents) {
-            Ok(settings) => Ok(settings),
+            Ok(mut settings) => {
+                settings.migrate();
+                Ok(settings)
+            }
             Err(error) => {
                 tracing::warn!(
                     "corrupt settings file at {}, resetting to defaults: {error}",
@@ -186,6 +189,27 @@ impl Settings {
                 );
                 Ok(Self::default())
             }
+        }
+    }
+
+    /// Apply one-time migrations for settings that have changed defaults.
+    ///
+    /// CapsLock was the original default but hijacks the system CapsLock key.
+    /// F6 was a temporary intermediate default. Both are migrated to the
+    /// WhisperFlow-style Ctrl+Shift+Space.
+    fn migrate(&mut self) {
+        let hotkey_lower = self.activation_hotkey.to_lowercase();
+        if hotkey_lower == "capslock"
+            || hotkey_lower == "caps_lock"
+            || hotkey_lower == "capital"
+            || hotkey_lower == "f6"
+        {
+            tracing::info!(
+                old = %self.activation_hotkey,
+                new = "Ctrl+Shift+Space",
+                "migrating legacy hotkey to Ctrl+Shift+Space"
+            );
+            self.activation_hotkey = "Ctrl+Shift+Space".into();
         }
     }
 
@@ -229,7 +253,7 @@ mod tests {
         assert!(settings.remove_fillers);
         assert!(settings.course_correction);
         assert!(settings.punctuation);
-        assert_eq!(settings.activation_hotkey, "CapsLock");
+        assert_eq!(settings.activation_hotkey, "Ctrl+Shift+Space");
         assert!(settings.hold_to_talk);
         assert!(settings.hands_free_double_press);
         assert_eq!(settings.overlay_position, OverlayPosition::TopCenter);

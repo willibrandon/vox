@@ -8,7 +8,21 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms. Audio capture, voice activity detection, speech recognition, LLM post-processing, text injection, pipeline orchestration, model management, application state, custom dictionary, and the GPUI application shell are implemented and tested (175 tests, 0 ignored). Specifically: cpal capture, lock-free ring buffer, rubato resampler, Silero VAD v5 via ONNX Runtime, Whisper Large V3 Turbo ASR via whisper.cpp, Qwen 2.5 3B Instruct post-processor via llama.cpp (filler removal, punctuation, course correction, number/date/email formatting, voice command detection, tone adaptation, token streaming), OS-level text injection with voice command keystroke mapping (Windows SendInput with UIPI elevation detection, macOS CGEvent with UTF-16 chunking and AX focus detection), async pipeline orchestration (tokio select loop, state broadcasting, transcript persistence, activation modes, dictionary substitution), model management (model registry with platform-specific directories, concurrent downloading with SHA-256 checksum verification, atomic file writes, GGUF/GGML/ONNX format detection, broadcast progress events), application state (VoxState as GPUI Global, JSON settings with atomic write and corrupt-file recovery, SQLite transcript history with search/delete/secure-clear, AppReadiness state machine, privacy-enforced transcript writes via TranscriptWriter, platform data directories), custom dictionary (SQLite-backed word mappings with in-memory cache, case-insensitive whole-word substitution, LLM hint integration, use count tracking, command phrase exclusion, JSON import/export, schema migration), and GPUI application shell (overlay HUD window with drag support, system tray with PNG icons, global hotkey dispatch, structured logging with daily rotation, async pipeline initialization loading ASR and LLM onto GPU before marking Ready).
+Early development. The three-crate workspace compiles on both platforms. 204 tests, 0 ignored.
+
+### Implemented
+
+- **Audio capture** — cpal input with lock-free ring buffer, rubato resampler, real-time RMS amplitude via AtomicU32
+- **Voice activity detection** — Silero VAD v5 via ONNX Runtime, split pre/post padding (300ms/100ms) for soft speech onset capture
+- **Speech recognition** — Whisper Large V3 Turbo via whisper.cpp, 200ms silence pre-padding, energy-based hallucination guard
+- **LLM post-processing** — Qwen 2.5 3B Instruct via llama.cpp (filler removal, punctuation, course correction, number/date/email formatting, voice command detection, tone adaptation, token streaming, command misclassification guard)
+- **Text injection** — OS-level keystroke simulation with voice command mapping (Windows SendInput with UIPI elevation detection, macOS CGEvent with UTF-16 chunking and AX focus detection)
+- **Pipeline orchestration** — Tokio select loop, state broadcasting, transcript persistence, activation modes, dictionary substitution, generation-gated session lifecycle
+- **Model management** — Registry with platform-specific directories, concurrent downloading with SHA-256 verification, atomic file writes, GGUF/GGML/ONNX format detection, per-instance model directory for test isolation
+- **Application state** — VoxState as GPUI Global, JSON settings with atomic write and corrupt-file recovery, SQLite transcript history with search/delete/secure-clear, AppReadiness state machine, privacy-enforced transcript writes
+- **Custom dictionary** — SQLite-backed word mappings with in-memory cache, case-insensitive whole-word substitution, LLM hint integration, use count tracking, command phrase exclusion, JSON import/export
+- **GPUI application shell** — System tray with PNG icons, global hotkey dispatch, structured logging with daily rotation, async pipeline initialization loading ASR and LLM onto GPU before marking Ready
+- **Overlay HUD** — Always-on-top draggable pill window with state-dependent rendering (download progress, waveform visualizer, transcript preview, injected text fade, error display, quick settings), position persistence with display bounds clamping
 
 ## Prerequisites
 
