@@ -12,7 +12,7 @@ Design document: `docs/design.md`. Constitution: `.specify/memory/constitution.m
 
 ## Constitution (All Principles Are Non-Negotiable)
 
-Every change must comply with these 12 principles. Violations are rejected.
+Every change must comply with these 13 principles. Violations are rejected.
 
 1. **Local-Only Processing** — All audio/ML processing on-device. No network calls except model download. No telemetry. SHA-256 checksum verification on downloaded models.
 2. **Real-Time Latency Budget** — End-to-end < 300ms (RTX 4090), < 750ms (M4 Pro). No blocking on audio callback thread. ML inference on processing/GPU threads only.
@@ -26,6 +26,7 @@ Every change must comply with these 12 principles. Violations are rejected.
 10. **No Deferral** — Claude MUST NEVER defer any work item, decision, clarification, action, or output item to a later phase. This covers ALL outputs: code, specs, tables, reports, coverage summaries. No item in any table may be labeled "Deferred" or "Outstanding." No hedging ("planning concern," "low impact," "better addressed later"). Every gap MUST be resolved NOW — ask a question, make a decision, or fill it. Violations result in immediate deletion of all generated work.
 11. **No Optional Compilation** — When the design requires a dependency or trait implementation, it is a required dependency — never optional. No `optional = true` in Cargo.toml, no `#[cfg(feature = "...")]` guards on required functionality. Feature flags are only for platform-specific backends (`cuda`, `metal`). If it's in the design, it compiles unconditionally.
 12. **No Blame Attribution** — Claude MUST NEVER claim a problem is a "pre-existing issue," attribute a bug to another feature/session, or use provenance as a reason not to fix it. If Claude encounters something broken, Claude fixes it. No commentary about whose fault it is, no "not my problem" deflection. The origin of a defect is irrelevant — only the fix matters.
+13. **No Placeholders** — Claude MUST NEVER implement placeholder, stub, mock, fake, or skeleton code in production source files. Every function body, struct, module, and data file MUST contain real, working implementation. No `todo!()`, no dummy data files, no hardcoded return values for functions that should compute real results, no "will fill in later" code. If a function exists, it works. Violations result in immediate deletion of all related code.
 
 ## Performance Budgets (Binding)
 

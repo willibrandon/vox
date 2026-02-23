@@ -1,17 +1,21 @@
 <!--
   Sync Impact Report
   ===================
-  Version change: 1.8.0 → 1.9.0 (MINOR — Principle XII added)
+  Version change: 1.9.0 → 1.10.0 (MINOR — Principle XIII added)
 
   Modified principles: None
 
   Added sections:
-    - Principle XII: No Blame Attribution (NON-NEGOTIABLE)
-      Forbids claiming any encountered problem is a "pre-existing
-      issue," deflecting ownership to other features/sessions, or
-      using provenance as a reason not to fix something. If Claude
-      encounters a broken thing, Claude fixes it — no commentary
-      about whose fault it is.
+    - Principle XIII: No Placeholders (NON-NEGOTIABLE)
+      Forbids implementing placeholder, stub, mock, fake, or
+      skeleton code in production source files. Every function,
+      struct, module, or integration point MUST contain real,
+      working implementation. Placeholder files (e.g., 11-byte
+      "placeholder" text masquerading as model files), TODO-only
+      function bodies, empty trait impls that return dummy values,
+      and any other form of "will fill in later" code are absolutely
+      forbidden. Violations result in immediate deletion of all
+      related code.
 
   Removed sections: None
 
@@ -20,20 +24,20 @@
         uses dynamic gate list from constitution
     ✅ spec-template.md — no changes needed
     ✅ tasks-template.md — no changes needed
-    ✅ agent-file-template.md — no changes needed
-    ✅ checklist-template.md — no changes needed
 
   Companion updates:
-    ⚠ CLAUDE.md — Principle 12 summary needs adding to
+    ⚠ CLAUDE.md — Principle 13 summary needs adding to
         constitution list (manual follow-up)
+    ⚠ CLAUDE.md — Principle 12 summary still pending from v1.9.0
 
   Follow-up TODOs:
-    - Update CLAUDE.md constitution summary to include Principle 12
+    - Update CLAUDE.md constitution summary to include Principles
+      12 and 13
 -->
 
 # Vox Constitution
 
-**Version**: 1.9.0
+**Version**: 1.10.0
 **Ratified**: 2026-02-19
 **Last Amended**: 2026-02-22
 
@@ -232,6 +236,46 @@ validation. The origin of the problem is irrelevant — only the fix
 matters. Violations of this principle result in immediate deletion
 of all generated work.
 
+### XIII. No Placeholders (NON-NEGOTIABLE)
+
+Claude MUST NEVER implement placeholder, stub, mock, fake, or
+skeleton code in any production source file. Every function body,
+struct implementation, module, integration point, and data file
+MUST contain real, working, complete implementation that performs
+its documented purpose.
+
+The following are absolutely forbidden:
+
+- Writing a function body that contains only a `todo!()`,
+  `unimplemented!()`, `panic!("not yet implemented")`, or
+  equivalent crash-on-call marker
+- Creating data files with dummy content (e.g., writing
+  "placeholder" text into a file that should contain a binary
+  model, config, or dataset)
+- Implementing a trait method that returns hardcoded dummy values
+  instead of performing the real operation
+- Writing `// TODO: implement` in a function body and leaving it
+  at that — the function MUST be implemented immediately
+- Creating empty or near-empty module files with only `//!` docs
+  and no actual types, functions, or logic
+- Returning `Ok(())` or `Default::default()` from functions that
+  are supposed to perform side effects or compute real values
+- Implementing a "happy path only" version that silently ignores
+  error cases the design requires handling
+- Any form of "will fill in later" code that compiles but does
+  not actually work when called at runtime
+
+Every line of code Claude writes MUST be real production code
+that works when executed. If Claude cannot implement a function
+because it depends on an unbuilt component, Claude MUST either
+build that component first or raise the dependency explicitly —
+never paper over it with a placeholder. If Claude writes a test,
+the test MUST assert real behavior against real code — not test
+that a stub returns a hardcoded value.
+
+Violations of this principle result in immediate deletion of all
+related code.
+
 ## Performance & Resource Constraints
 
 These budgets are derived from the design document (Section 13) and
@@ -309,6 +353,7 @@ Check section that gates Phase 0 research. The check verifies:
 - Principle X: No work items deferred to later phases.
 - Principle XI: No optional/feature-gated required dependencies.
 - Principle XII: No blame attribution or ownership deflection.
+- Principle XIII: No placeholder, stub, or fake implementations.
 
 Violations MUST be documented in the plan's Complexity Tracking
 table with justification and a simpler alternative that was rejected.
