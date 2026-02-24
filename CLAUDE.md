@@ -128,6 +128,8 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 - parking_lot (RwLock), serde/serde_json, anyhow, tracing — all already in vox_core/Cargo.toml
 - Rust 2024 (1.85+) + gpui (git rev 89e9ab97, v0.2.2), vox_core (workspace path dep), serde, parking_lot, tracing, smallvec (012-overlay-hud)
 - Settings persisted to JSON (`settings.json`) — overlay position and opacity stored in existing `Settings` struct (012-overlay-hud)
+- Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), vox_core (workspace path dep), serde, serde_json, parking_lot, tracing, tracing-subscriber, smallvec, anyhow, cpal (via vox_core for device enumeration) (013-settings-window)
+- JSON (settings.json via vox_core), SQLite (vox.db via vox_core for transcripts + dictionary) (013-settings-window)
 
 ## Recent Changes
 
