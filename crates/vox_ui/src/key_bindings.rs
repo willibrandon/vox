@@ -6,6 +6,7 @@
 
 use gpui::{actions, App, KeyBinding};
 
+use crate::workspace::open_settings_window;
 
 actions!(
     vox,
@@ -39,8 +40,8 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &ToggleOverlay, _cx| {
         tracing::info!("ToggleOverlay dispatched");
     });
-    cx.on_action(|_: &OpenSettings, _cx| {
-        tracing::info!("OpenSettings dispatched");
+    cx.on_action(|_: &OpenSettings, cx| {
+        open_settings_window(cx);
     });
     cx.on_action(|_: &Quit, cx| {
         cx.quit();

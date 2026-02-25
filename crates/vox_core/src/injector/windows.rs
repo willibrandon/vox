@@ -80,15 +80,17 @@ fn is_foreground_elevated(hwnd: HWND) -> Result<bool> {
     }
 }
 
-/// Release all modifier keys (Ctrl, Shift, Alt, Space) before text injection.
+/// Build key-up INPUT events for all modifier keys (Ctrl, Shift, Alt, Space).
 ///
 /// When the user activates dictation with a modifier hotkey (e.g. Ctrl+Shift+Space),
-/// those keys may still be physically held or their key-up events may not have been
-/// processed when injection starts. This causes the target application to interpret
-/// injected characters as keyboard shortcuts (Ctrl+Shift+B instead of 'B'), silently
-/// swallowing text. Sending explicit key-up events for all modifiers clears this state.
-fn release_modifier_keys() {
-    let modifiers = [
+/// those keys may still be physically held when injection starts. This causes the
+/// target application to interpret injected characters as keyboard shortcuts
+/// (Ctrl+Shift+B instead of 'B'), silently swallowing text. These key-up events
+/// must be prepended to the text INPUT array and sent in a **single** `SendInput`
+/// call — sending them as a separate call creates a window where physical key state
+/// can re-assert between the modifier release and text injection.
+fn modifier_release_inputs() -> Vec<INPUT> {
+    const MODIFIERS: [VIRTUAL_KEY; 10] = [
         VK_CONTROL,
         VK_LCONTROL,
         VK_RCONTROL,
@@ -101,7 +103,7 @@ fn release_modifier_keys() {
         VK_SPACE,
     ];
 
-    let inputs: Vec<INPUT> = modifiers
+    MODIFIERS
         .iter()
         .map(|&vk| INPUT {
             r#type: INPUT_KEYBOARD,
@@ -113,11 +115,7 @@ fn release_modifier_keys() {
                 },
             },
         })
-        .collect();
-
-    unsafe {
-        SendInput(&inputs, mem::size_of::<INPUT>() as i32);
-    }
+        .collect()
 }
 
 /// Inject text into the focused application via `SendInput` with `KEYEVENTF_UNICODE`.
@@ -161,57 +159,99 @@ pub(super) fn inject_text_impl(text: &str) -> InjectionResult {
         }
     }
 
-    // Release any held modifier keys before injecting text. Without this,
-    // hotkey modifiers (Ctrl+Shift from Ctrl+Shift+Space) cause the target
-    // app to interpret injected characters as keyboard shortcuts.
-    release_modifier_keys();
+    // Release modifier keys first so held hotkey keys (Ctrl+Shift+Space)
+    // don't cause the target app to interpret injected text as shortcuts.
+    let modifier_inputs = modifier_release_inputs();
+    let modifier_sent =
+        unsafe { SendInput(&modifier_inputs, mem::size_of::<INPUT>() as i32) };
 
+    // Brief pause for the modifier releases to take effect in the target
+    // app's input processing before text events start arriving.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // Inject text in small chunks. SendInput inserts events into the system
+    // input stream atomically per call, but the target app processes them
+    // asynchronously via its message loop. Large batches (200+ events) can
+    // overwhelm the app's input processing — events get queued in the system
+    // input stream but the app only processes a fraction before its message
+    // loop yields to other work. Chunking with brief pauses lets each batch
+    // fully reach the app before the next batch arrives.
+    const CHUNK_CHARS: usize = 32;
     let utf16: Vec<u16> = clean.encode_utf16().collect();
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(utf16.len() * 2);
+    let mut total_sent: u32 = 0;
+    let mut total_expected: u32 = 0;
+    let chunks: Vec<&[u16]> = utf16.chunks(CHUNK_CHARS).collect();
+    let chunk_count = chunks.len();
 
-    for &code_unit in &utf16 {
-        // Key down
-        inputs.push(INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(0),
-                    wScan: code_unit,
-                    dwFlags: KEYEVENTF_UNICODE,
-                    time: 0,
-                    dwExtraInfo: 0,
+    for (i, chunk) in chunks.iter().enumerate() {
+        let mut inputs = Vec::with_capacity(chunk.len() * 2);
+        for &code_unit in *chunk {
+            inputs.push(INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0),
+                        wScan: code_unit,
+                        dwFlags: KEYEVENTF_UNICODE,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
                 },
-            },
-        });
-        // Key up
-        inputs.push(INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(0),
-                    wScan: code_unit,
-                    dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
+            });
+            inputs.push(INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0),
+                        wScan: code_unit,
+                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
                 },
-            },
-        });
+            });
+        }
+
+        let sent = unsafe { SendInput(&inputs, mem::size_of::<INPUT>() as i32) };
+        total_sent += sent;
+        total_expected += inputs.len() as u32;
+
+        if sent == 0 {
+            tracing::error!(
+                chunk = i,
+                chunk_count,
+                total_sent,
+                total_expected,
+                "SendInput returned 0 mid-injection"
+            );
+            return InjectionResult::Blocked {
+                reason: InjectionError::PlatformError(format!(
+                    "SendInput returned 0 at chunk {i}/{chunk_count}"
+                )),
+                text: text.to_string(),
+            };
+        }
+
+        // Pause between chunks so the target app can process each batch.
+        // Skip delay after the final chunk.
+        if i < chunk_count - 1 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
-    let sent = unsafe { SendInput(&inputs, mem::size_of::<INPUT>() as i32) };
-    let expected = inputs.len() as u32;
+    tracing::info!(
+        total_sent,
+        total_expected,
+        modifier_sent,
+        text_len = clean.len(),
+        chunk_count,
+        "SendInput chunked injection"
+    );
 
-    if sent == 0 {
-        return InjectionResult::Blocked {
-            reason: InjectionError::PlatformError("SendInput returned 0".to_string()),
-            text: text.to_string(),
-        };
-    }
-
-    if sent < expected {
+    if total_sent < total_expected {
         return InjectionResult::Blocked {
             reason: InjectionError::PlatformError(format!(
-                "SendInput partial: {sent}/{expected} events injected"
+                "SendInput partial: {total_sent}/{total_expected} events injected"
             )),
             text: text.to_string(),
         };

@@ -51,6 +51,10 @@ pub mod size {
     pub const WAVEFORM_HEIGHT: Pixels = px(40.0);
     /// Download progress bar height (6px).
     pub const PROGRESS_BAR_HEIGHT: Pixels = px(6.0);
+    /// Sidebar navigation width in the settings workspace (160px).
+    pub const SIDEBAR_WIDTH: Pixels = px(160.0);
+    /// Status bar height at the bottom of the settings workspace (28px).
+    pub const STATUS_BAR_HEIGHT: Pixels = px(28.0);
 }
 
 #[cfg(test)]

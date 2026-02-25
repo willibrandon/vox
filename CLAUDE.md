@@ -133,6 +133,7 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 
 ## Recent Changes
 
+- 013-settings-window: Workspace window with sidebar navigation (Settings/History/Dictionary/Models/Logs panels), custom Scrollbar Element (vertical-only, always-visible, sibling-of-scroll-container pattern to avoid GPUI prepaint offset shift), Settings panel with scrollable sections (Audio/VAD/Hotkey/LLM/Appearance/Advanced), History panel with uniform_list virtualization (single-line text truncation for fixed-height items), Dictionary panel with CRUD/search/import-export, Model panel reading ModelRuntimeState from pipeline init (Downloaded/Loading/Loaded with VRAM), Log panel with SharedLogStore global (persists across window open/close), StatusBar with live latency (from latest transcript) and VRAM (summed from loaded models). Window icon via winresource build.rs on Windows. Singleton window with position/size persistence.
 - 012-overlay-hud: Reactive overlay HUD pill window (always-on-top, borderless, draggable, semi-transparent). State-dependent rendering: download progress bars, loading stages, idle hotkey hint, waveform visualizer (30fps RMS polling from audio callback via AtomicU32), processing transcript preview, injected text with 2s fade, injection failure with Copy button, error display, quick settings dropdown. Position persistence with display bounds clamping (off-screen fallback to centered). Full pipeline wiring: AudioCapture → VAD → ASR → LLM → TextInjection via ToggleRecording action, with generation-gated session forwarding to prevent stale-task state overwrites on quick stop/start. Win32 HWND_TOPMOST for cross-app always-on-top. VAD pre-buffer split (300ms pre / 100ms post) for soft speech onset capture, 200ms silence pre-padding before ASR. ModelDownloader per-instance model_dir for test isolation.
 - 011-gpui-app-shell: GPUI application shell with overlay HUD, system tray (PNG icons via `include_bytes!`), global hotkey (CapsLock default), structured logging (daily rotation, 7-day retention), action dispatch (hotkey/tray → `cx.dispatch_action`), async pipeline init (downloads models, loads ASR + LLM onto GPU via `spawn_blocking`, stores in VoxState, only then sets Ready). VoxState gained `asr_engine`/`llm_processor` fields with take-once pattern for orchestrator handoff.
 - 010-custom-dictionary: SQLite-backed word mappings with in-memory cache, case-insensitive substitution, LLM hint integration, JSON import/export
@@ -142,7 +143,6 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 # Rust coding guidelines
 
 * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
-* Every `pub` item MUST have a `///` doc comment. Modules MUST have `//!` module-level docs. Describe what the item does and why a caller would use it — do not restate the type signature. Omit only on trait impls where the trait's own docs suffice.
 * Do not write organizational or comments that summarize the code. Comments should only be written in order to explain "why" the code is written in some way in the case there is a reason that is tricky / non-obvious.
 * Prefer implementing functionality in existing files unless it is a new logical component. Avoid creating many small files.
 * Avoid using functions that panic like `unwrap()`, instead use mechanisms like `?` to propagate errors.
@@ -167,6 +167,12 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
       }
   });
   ```
+
+# Timers in tests
+
+* In GPUI tests, prefer GPUI executor timers over `smol::Timer::after(...)` when you need timeouts, delays, or to drive `run_until_parked()`:
+  - Use `cx.background_executor().timer(duration).await` (or `cx.background_executor.timer(duration).await` in `TestAppContext`) so the work is scheduled on GPUI's dispatcher.
+  - Avoid `smol::Timer::after(...)` for test timeouts when you rely on `run_until_parked()`, because it may not be tracked by GPUI's scheduler and can lead to "nothing left to run" when pumping.
 
 # GPUI
 
@@ -207,9 +213,9 @@ When  `read_with`, `update`, or `update_in` are used with an async context, the 
 
 All use of entities and UI rendering occurs on a single foreground thread.
 
-`cx.spawn(async move |cx| ...)` runs an async closure on the foreground thread. Within the closure, `cx` is an async context like `AsyncApp` or `AsyncWindowContext`.
+`cx.spawn(async move |cx| ...)` runs an async closure on the foreground thread. Within the closure, `cx` is `&mut AsyncApp`.
 
-When the outer cx is a `Context<T>`, the use of `spawn` instead looks like `cx.spawn(async move |handle, cx| ...)`, where `handle: WeakEntity<T>`.
+When the outer cx is a `Context<T>`, the use of `spawn` instead looks like `cx.spawn(async move |this, cx| ...)`, where `this: WeakEntity<T>` and `cx: &mut AsyncApp`.
 
 To do work on other threads, `cx.background_spawn(async move { ... })` is used. Often this background task is awaited on by a foreground task which uses the results to update state.
 
@@ -239,7 +245,7 @@ impl Render for TextWithBorder {
 
 Since `impl IntoElement for SharedString` exists, it can be used as an argument to `child`. `SharedString` is used to avoid copying strings, and is either an `&'static str` or `Arc<str>`.
 
-UI components that are constructed just to be turned into elements can instead implement the `RenderOnce` trait, which is similar to `Render`, but its `render` method takes ownership of `self`. Types that implement this trait can use `#[derive(IntoElement)]` to use them directly as children.
+UI components that are constructed just to be turned into elements can instead implement the `RenderOnce` trait, which is similar to `Render`, but its `render` method takes ownership of `self` and receives `&mut App` instead of `&mut Context<Self>`. Types that implement this trait can use `#[derive(IntoElement)]` to use them directly as children.
 
 The style methods on elements are similar to those used by Tailwind CSS.
 
@@ -265,16 +271,6 @@ When a view's state has changed in a way that may affect its rendering, it shoul
 
 ## Entity events
 
-While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmittor<EventType> for EntityType {}`.
+While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmitter<EventType> for EntityType {}`.
 
 Other entities can then register a callback to handle these events by doing `cx.subscribe(other_entity, |this, other_entity, event, cx| ...)`. This will return a `Subscription` which deregisters the callback when dropped.  Typically `cx.subscribe` happens when creating a new entity and the subscriptions are stored in a `_subscriptions: Vec<Subscription>` field.
-
-## Recent API changes
-
-GPUI has had some changes to its APIs. Always write code using the new APIs:
-
-* `spawn` methods now take async closures (`AsyncFn`), and so should be called like `cx.spawn(async move |cx| ...)`.
-* Use `Entity<T>`. This replaces `Model<T>` and `View<T>` which no longer exist and should NEVER be used.
-* Use `App` references. This replaces `AppContext` which no longer exists and should NEVER be used.
-* Use `Context<T>` references. This replaces `ModelContext<T>` which no longer exists and should NEVER be used.
-* `Window` is now passed around explicitly. The new interface adds a `Window` reference parameter to some methods, and adds some new "*_in" methods for plumbing `Window`. The old types `WindowContext` and `ViewContext<T>` should NEVER be used.

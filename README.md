@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms. 204 tests, 0 ignored.
+Early development. The three-crate workspace compiles on both platforms.
 
 ### Implemented
 
@@ -23,6 +23,7 @@ Early development. The three-crate workspace compiles on both platforms. 204 tes
 - **Custom dictionary** — SQLite-backed word mappings with in-memory cache, case-insensitive whole-word substitution, LLM hint integration, use count tracking, command phrase exclusion, JSON import/export
 - **GPUI application shell** — System tray with PNG icons, global hotkey dispatch, structured logging with daily rotation, async pipeline initialization loading ASR and LLM onto GPU before marking Ready
 - **Overlay HUD** — Always-on-top draggable pill window with state-dependent rendering (download progress, waveform visualizer, transcript preview, injected text fade, error display, quick settings), position persistence with display bounds clamping
+- **Settings window** — Full management window with sidebar navigation, configurable audio/VAD/hotkey/LLM/appearance settings, transcript history browser, dictionary editor, model status, and live log viewer
 
 ## Prerequisites
 
@@ -63,12 +64,12 @@ cargo build --release -p vox --features vox_core/cuda
 ## Project Structure
 
 ```
+assets/icons/   Icon assets
 crates/
   vox/          Binary entry point
   vox_core/     Backend — audio, VAD, ASR, LLM, text injection (13 modules)
   vox_ui/       GPUI UI components — overlay, panels, controls (14 modules)
-assets/icons/   Icon assets
-tests/          Integration test stubs
+tests/          Integration tests
 scripts/        Model download scripts
 specs/          Feature specifications
 ```
@@ -83,10 +84,10 @@ Three-crate Cargo workspace:
 
 ## Target Hardware
 
-| Machine | GPU | Role |
+| Platform | GPU | Backend |
 |---|---|---|
-| Windows Desktop | NVIDIA RTX 4090 (CUDA) | Primary dev, max performance |
-| macOS Laptop | Apple M4 Pro (Metal) | Mobile dev, daily driver |
+| Windows | NVIDIA RTX 4090 | CUDA |
+| macOS | Apple M4 Pro | Metal |
 
 ## License
 

@@ -8,6 +8,7 @@
 //! Also provides data directory resolution ([`data_dir`], [`ensure_data_dirs`])
 //! and database initialization ([`init_database`]).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,7 +20,8 @@ use crate::asr::AsrEngine;
 use crate::config::Settings;
 use crate::dictionary::DictionaryCache;
 use crate::llm::PostProcessor;
-use crate::models::DownloadProgress;
+use crate::log_sink::LogReceiver;
+use crate::models::{BenchmarkResult, DownloadProgress};
 use crate::pipeline::state::PipelineState;
 use crate::pipeline::transcript::{TranscriptEntry, TranscriptStore};
 
@@ -53,6 +55,36 @@ pub enum AppReadiness {
     },
 }
 
+/// Runtime state of a single ML model.
+#[derive(Clone, Debug)]
+pub enum ModelRuntimeState {
+    /// Model file not found on disk.
+    Missing,
+    /// Model is being downloaded.
+    Downloading,
+    /// Model file exists on disk but not loaded into memory.
+    Downloaded,
+    /// Model is being loaded into GPU memory.
+    Loading,
+    /// Model is loaded and ready for inference.
+    Loaded,
+    /// Model failed to load or encountered an error.
+    Error(String),
+}
+
+/// Runtime information about a single ML model.
+#[derive(Clone, Debug)]
+pub struct ModelRuntimeInfo {
+    /// Current state of the model.
+    pub state: ModelRuntimeState,
+    /// VRAM usage in bytes when loaded.
+    pub vram_bytes: Option<u64>,
+    /// Benchmark result from inference testing.
+    pub benchmark: Option<BenchmarkResult>,
+    /// Custom model file path (if swapped from default).
+    pub custom_path: Option<PathBuf>,
+}
+
 /// Central application state accessible via GPUI's Global trait.
 ///
 /// Holds all runtime state: user settings, transcript store, application
@@ -82,6 +114,12 @@ pub struct VoxState {
     asr_engine: RwLock<Option<AsrEngine>>,
     /// Loaded LLM post-processor (Qwen on GPU). Set during pipeline init, taken by orchestrator.
     llm_processor: RwLock<Option<PostProcessor>>,
+    /// Per-model runtime information keyed by model name.
+    model_runtime: RwLock<HashMap<String, ModelRuntimeInfo>>,
+    /// Log receiver for the UI log panel. Taken once by the settings window.
+    log_receiver: RwLock<Option<LogReceiver>>,
+    /// Last end-to-end pipeline latency in milliseconds (ASR + LLM + inject).
+    last_latency_ms: RwLock<Option<u32>>,
 }
 
 impl gpui::Global for VoxState {}
@@ -131,6 +169,9 @@ impl VoxState {
             latest_rms: RwLock::new(0.0),
             asr_engine: RwLock::new(None),
             llm_processor: RwLock::new(None),
+            model_runtime: RwLock::new(HashMap::new()),
+            log_receiver: RwLock::new(None),
+            last_latency_ms: RwLock::new(None),
         })
     }
 
@@ -311,6 +352,47 @@ impl VoxState {
     /// Returns `None` if no processor has been set or it was previously taken.
     pub fn clone_llm_processor(&self) -> Option<PostProcessor> {
         self.llm_processor.read().clone()
+    }
+
+    // --- Model runtime info ---
+
+    /// Read the runtime information for a specific model by name.
+    pub fn model_runtime(&self, name: &str) -> Option<ModelRuntimeInfo> {
+        self.model_runtime.read().get(name).cloned()
+    }
+
+    /// Update runtime information for a specific model.
+    pub fn set_model_runtime(&self, name: String, info: ModelRuntimeInfo) {
+        self.model_runtime.write().insert(name, info);
+    }
+
+    /// Get a snapshot of all model runtime information.
+    pub fn all_model_runtime(&self) -> HashMap<String, ModelRuntimeInfo> {
+        self.model_runtime.read().clone()
+    }
+
+    // --- Latency tracking ---
+
+    /// Get the last measured end-to-end pipeline latency in milliseconds.
+    pub fn last_latency_ms(&self) -> Option<u32> {
+        *self.last_latency_ms.read()
+    }
+
+    /// Record the latest end-to-end pipeline latency in milliseconds.
+    pub fn set_last_latency_ms(&self, ms: u32) {
+        *self.last_latency_ms.write() = Some(ms);
+    }
+
+    // --- Log receiver ---
+
+    /// Store a log receiver for the UI log panel to consume.
+    pub fn set_log_receiver(&self, receiver: LogReceiver) {
+        *self.log_receiver.write() = Some(receiver);
+    }
+
+    /// Take the log receiver (returns None if already taken or not set).
+    pub fn take_log_receiver(&self) -> Option<LogReceiver> {
+        self.log_receiver.write().take()
     }
 
     /// Create a transcript writer for pipeline use.
@@ -590,6 +672,33 @@ mod tests {
         let loaded = Settings::load(dir.path()).expect("load");
         assert_eq!(loaded.language, "fr");
         assert_eq!(loaded.temperature, 0.8);
+    }
+
+    #[test]
+    fn test_settings_persistence_noise_gate() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let state = VoxState::new(dir.path()).expect("VoxState::new");
+
+        // Default noise_gate is 0.0
+        assert_eq!(state.settings().noise_gate, 0.0);
+
+        state
+            .update_settings(|s| s.noise_gate = 0.75)
+            .expect("update noise_gate");
+
+        // Verify in-memory
+        assert_eq!(state.settings().noise_gate, 0.75);
+
+        // Verify persisted to disk by reading the JSON file directly
+        let json_bytes =
+            std::fs::read(dir.path().join("settings.json")).expect("read settings.json");
+        let raw: serde_json::Value =
+            serde_json::from_slice(&json_bytes).expect("parse settings JSON");
+        let disk_value = raw["noise_gate"].as_f64().expect("noise_gate in JSON");
+        assert!(
+            (disk_value - 0.75).abs() < f64::EPSILON,
+            "noise_gate on disk should be 0.75, got {disk_value}"
+        );
     }
 
     #[test]

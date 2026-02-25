@@ -45,6 +45,11 @@ pub struct VadConfig {
     pub post_pad_ms: u32,
     /// Silero VAD input window size in samples. Fixed at 512 for 16 kHz (32ms).
     pub window_size_samples: u32,
+    /// When true, skip VAD inference entirely and send all recorded audio as a
+    /// single segment. Used in hold-to-talk mode where the user's hotkey press
+    /// explicitly marks speech boundaries — the VAD's onset detection latency
+    /// (500–900ms warm-up) would otherwise truncate the beginning of speech.
+    pub bypass_vad: bool,
 }
 
 impl Default for VadConfig {
@@ -57,6 +62,7 @@ impl Default for VadConfig {
             pre_pad_ms: 300,
             post_pad_ms: 100,
             window_size_samples: 512,
+            bypass_vad: false,
         }
     }
 }
@@ -222,12 +228,103 @@ impl VadStateMachine {
     }
 }
 
+/// Passthrough loop for hold-to-talk mode: accumulates all audio without VAD
+/// and sends the entire recording as a single segment on stop.
+///
+/// Bypasses Silero VAD inference, state machine, and speech chunker. The user's
+/// hotkey press/release explicitly marks speech boundaries, so onset detection
+/// is unnecessary. This eliminates the 500–900ms VAD warm-up delay that causes
+/// the beginning of speech to be lost in short recordings.
+fn run_passthrough_loop(
+    consumer: &mut HeapCons<f32>,
+    mut resampler: Option<&mut crate::audio::AudioResampler>,
+    segment_tx: &tokio::sync::mpsc::Sender<Vec<f32>>,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    let mut audio_buffer: Vec<f32> = Vec::with_capacity(16000 * 10); // ~10s pre-alloc
+    let mut read_buffer = vec![0.0f32; 1024];
+
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        let available = consumer.occupied_len();
+        if available == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            continue;
+        }
+
+        let to_read = available.min(read_buffer.len());
+        let read_count = consumer.pop_slice(&mut read_buffer[..to_read]);
+        if read_count == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            continue;
+        }
+
+        let samples = if let Some(ref mut resampler) = resampler {
+            match resampler.process(&read_buffer[..read_count]) {
+                Ok(resampled) => resampled,
+                Err(error) => {
+                    tracing::warn!("Resample error, skipping batch: {error}");
+                    continue;
+                }
+            }
+        } else {
+            read_buffer[..read_count].to_vec()
+        };
+
+        audio_buffer.extend_from_slice(&samples);
+    }
+
+    // Drain remaining audio from ring buffer after stop flag
+    loop {
+        let available = consumer.occupied_len();
+        if available == 0 {
+            break;
+        }
+
+        let to_read = available.min(read_buffer.len());
+        let read_count = consumer.pop_slice(&mut read_buffer[..to_read]);
+        if read_count == 0 {
+            break;
+        }
+
+        let samples = if let Some(ref mut resampler) = resampler {
+            match resampler.process(&read_buffer[..read_count]) {
+                Ok(resampled) => resampled,
+                Err(error) => {
+                    tracing::warn!("Resample error during drain: {error}");
+                    break;
+                }
+            }
+        } else {
+            read_buffer[..read_count].to_vec()
+        };
+
+        audio_buffer.extend_from_slice(&samples);
+    }
+
+    if !audio_buffer.is_empty() {
+        let duration_ms = (audio_buffer.len() as f32 / 16000.0 * 1000.0) as u32;
+        tracing::info!(
+            samples = audio_buffer.len(),
+            duration_ms,
+            "passthrough: sending entire recording as one segment"
+        );
+        segment_tx.blocking_send(audio_buffer).ok();
+    } else {
+        tracing::debug!("passthrough: no audio captured, nothing to send");
+    }
+
+    Ok(())
+}
+
 /// Run the VAD processing loop on a dedicated thread.
 ///
 /// Reads audio from the ring buffer consumer, optionally resamples to 16 kHz,
 /// extracts 512-sample windows, runs Silero VAD inference, feeds results
 /// through the state machine and chunker, and dispatches complete speech
 /// segments via the channel. Exits when the `stop` flag is set.
+///
+/// When `VadConfig::bypass_vad` is true, delegates to [`run_passthrough_loop`]
+/// which sends all audio as a single segment (used in hold-to-talk mode).
 ///
 /// This function is synchronous and should be called from `std::thread::spawn`,
 /// not from an async runtime. The only async boundary is `segment_tx.try_send`.
@@ -239,7 +336,12 @@ pub fn run_vad_loop(
     chunker: &mut SpeechChunker,
     segment_tx: &tokio::sync::mpsc::Sender<Vec<f32>>,
     stop: &std::sync::atomic::AtomicBool,
+    config: &VadConfig,
 ) -> Result<()> {
+    if config.bypass_vad {
+        return run_passthrough_loop(consumer, resampler, segment_tx, stop);
+    }
+
     let window_size = 512;
     let mut accumulation_buffer: Vec<f32> = Vec::with_capacity(window_size * 4);
     let mut read_buffer = vec![0.0f32; window_size * 2];
@@ -300,7 +402,81 @@ pub fn run_vad_loop(
         }
     }
 
-    // Flush any remaining audio on stop
+    // Drain remaining audio from ring buffer so no samples are lost on stop.
+    // The while-loop above exits as soon as stop is set, but the audio callback
+    // may have pushed samples after the last read. Process them through the
+    // full VAD → state-machine → chunker pipeline before flushing.
+    loop {
+        let available = consumer.occupied_len();
+        if available == 0 {
+            break;
+        }
+
+        let to_read = available.min(read_buffer.len());
+        let read_count = consumer.pop_slice(&mut read_buffer[..to_read]);
+        if read_count == 0 {
+            break;
+        }
+
+        let samples = if let Some(ref mut resampler) = resampler {
+            match resampler.process(&read_buffer[..read_count]) {
+                Ok(resampled) => resampled,
+                Err(error) => {
+                    tracing::warn!("Resample error during drain: {error}");
+                    break;
+                }
+            }
+        } else {
+            read_buffer[..read_count].to_vec()
+        };
+
+        accumulation_buffer.extend_from_slice(&samples);
+    }
+
+    // Process all complete windows from the drain
+    while accumulation_buffer.len() >= window_size {
+        let window: Vec<f32> = accumulation_buffer.drain(..window_size).collect();
+
+        let speech_prob = match vad.process(&window) {
+            Ok(prob) => prob,
+            Err(error) => {
+                tracing::warn!("VAD inference error during drain: {error}");
+                continue;
+            }
+        };
+
+        let event = state_machine.update(speech_prob);
+        let segment = chunker.feed(&window, event.as_ref());
+
+        if let Some(segment) = segment {
+            segment_tx.blocking_send(segment).ok();
+        }
+    }
+
+    // Process remaining partial window (zero-padded) so the chunker receives
+    // every sample. The zero-padding naturally lowers speech probability,
+    // helping the state machine transition toward silence.
+    if !accumulation_buffer.is_empty() {
+        accumulation_buffer.resize(window_size, 0.0);
+        let speech_prob = match vad.process(&accumulation_buffer) {
+            Ok(prob) => prob,
+            Err(error) => {
+                tracing::warn!("VAD inference error for final partial window: {error}");
+                // Still flush below even if this window fails
+                0.0
+            }
+        };
+
+        let event = state_machine.update(speech_prob);
+        let segment = chunker.feed(&accumulation_buffer, event.as_ref());
+
+        if let Some(segment) = segment {
+            segment_tx.blocking_send(segment).ok();
+        }
+    }
+
+    // Flush any remaining accumulated speech (e.g. user stopped mid-utterance
+    // before the state machine detected silence)
     if let Some(segment) = chunker.flush() {
         segment_tx.blocking_send(segment).ok();
     }
@@ -483,7 +659,7 @@ mod tests {
         let mut vad_model =
             SileroVad::new(&model_path).expect("Failed to load VAD model");
         let mut state_machine = VadStateMachine::new(config.clone());
-        let mut chunker = SpeechChunker::new(config);
+        let mut chunker = SpeechChunker::new(config.clone());
         let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel(4);
         let (mut producer, mut consumer) =
             AudioRingBuffer::new(AudioRingBuffer::capacity_for_rate(16000));
@@ -501,6 +677,7 @@ mod tests {
                 &mut chunker,
                 &segment_tx,
                 &stop_flag,
+                &config,
             )
         });
 
@@ -571,7 +748,7 @@ mod tests {
         let mut vad_model =
             SileroVad::new(&model_path).expect("Failed to load VAD model");
         let mut state_machine = VadStateMachine::new(config.clone());
-        let mut chunker = SpeechChunker::new(config);
+        let mut chunker = SpeechChunker::new(config.clone());
         let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel(16);
         let (mut producer, mut consumer) =
             AudioRingBuffer::new(AudioRingBuffer::capacity_for_rate(16000));
@@ -588,6 +765,7 @@ mod tests {
                 &mut chunker,
                 &segment_tx,
                 &stop_flag,
+                &config,
             )
         });
 

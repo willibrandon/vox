@@ -1062,6 +1062,13 @@ mod tests {
             input_bg: hsla(0.0, 0.0, 0.08, 1.0),
             input_border: hsla(0.0, 0.0, 0.25, 1.0),
             input_focus_border: hsla(0.58, 0.8, 0.65, 1.0),
+            log_error: hsla(0.0, 0.85, 0.6, 1.0),
+            log_warn: hsla(0.1, 0.9, 0.6, 1.0),
+            log_info: hsla(0.0, 0.0, 0.93, 1.0),
+            log_debug: hsla(0.0, 0.0, 0.55, 1.0),
+            log_trace: hsla(0.0, 0.0, 0.35, 1.0),
+            scrollbar_thumb: hsla(0.0, 0.0, 0.45, 1.0),
+            scrollbar_track: hsla(0.0, 0.0, 0.16, 0.5),
         }
     }
 }

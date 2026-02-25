@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
-use gpui::{App, Application, AsyncApp};
+use gpui::{App, AppContext as _, Application, AsyncApp};
 use parking_lot::Mutex;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
@@ -62,26 +62,31 @@ struct RecordingSession {
 impl gpui::Global for RecordingSession {}
 
 fn main() {
-    let _guard = init_logging();
+    let (_guard, log_receiver) = init_logging();
 
     // Ctrl+C in the terminal should exit cleanly with code 0
     ctrlc::set_handler(|| std::process::exit(0)).ok();
 
-    Application::new().run(|cx: &mut App| {
-        if let Err(err) = run_app(cx) {
+    Application::new().run(move |cx: &mut App| {
+        if let Err(err) = run_app(cx, log_receiver) {
             tracing::error!(%err, "application startup failed");
             cx.quit();
         }
     });
 }
 
-fn run_app(cx: &mut App) -> anyhow::Result<()> {
+fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyhow::Result<()> {
     let data_dir = ensure_data_dirs()?;
     let state = VoxState::new(&data_dir)?;
     let initial_readiness = state.readiness();
     let initial_pipeline = state.pipeline_state();
     cx.set_global(state);
     cx.set_global(VoxTheme::dark());
+
+    // Create persistent LogStore entity that survives settings window close/reopen.
+    // Must happen after VoxState is set as global but before any UI opens.
+    let log_store = cx.new(|cx| vox_ui::log_panel::LogStore::new(cx, log_receiver));
+    cx.set_global(vox_ui::log_panel::SharedLogStore(log_store));
 
     // Initialize the reactive bridge before opening the overlay window
     cx.set_global(OverlayDisplayState {
@@ -165,6 +170,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
             min_speech_ms: settings.min_speech_ms,
             min_silence_ms: settings.min_silence_ms,
             max_speech_ms: settings.max_segment_ms,
+            bypass_vad: settings.hold_to_talk,
             ..VadConfig::default()
         };
         drop(settings);
@@ -528,12 +534,37 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
         anyhow::bail!("not all models available after download");
     }
 
+    // Mark all models as Downloaded now that they're verified on disk
+    cx.update(|cx| {
+        let state = cx.global::<VoxState>();
+        for model in models::MODELS {
+            state.set_model_runtime(
+                model.name.to_string(),
+                vox_core::state::ModelRuntimeInfo {
+                    state: vox_core::state::ModelRuntimeState::Downloaded,
+                    vram_bytes: None,
+                    benchmark: None,
+                    custom_path: None,
+                },
+            );
+        }
+    });
+
     // Load ASR engine (Whisper → GPU)
     cx.update(|cx| {
         cx.global::<VoxState>()
             .set_readiness(AppReadiness::Loading {
                 stage: "Loading ASR model...".into(),
             });
+        cx.global::<VoxState>().set_model_runtime(
+            models::MODELS[1].name.to_string(),
+            vox_core::state::ModelRuntimeInfo {
+                state: vox_core::state::ModelRuntimeState::Loading,
+                vram_bytes: None,
+                benchmark: None,
+                custom_path: None,
+            },
+        );
         update_overlay_state(cx);
     });
 
@@ -544,6 +575,15 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
 
     cx.update(|cx| {
         cx.global::<VoxState>().set_asr_engine(asr_engine);
+        cx.global::<VoxState>().set_model_runtime(
+            models::MODELS[1].name.to_string(),
+            vox_core::state::ModelRuntimeInfo {
+                state: vox_core::state::ModelRuntimeState::Loaded,
+                vram_bytes: Some(573 * 1024 * 1024),
+                benchmark: None,
+                custom_path: None,
+            },
+        );
     });
 
     // Load LLM post-processor (Qwen → GPU)
@@ -552,6 +592,15 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .set_readiness(AppReadiness::Loading {
                 stage: "Loading LLM model...".into(),
             });
+        cx.global::<VoxState>().set_model_runtime(
+            models::MODELS[2].name.to_string(),
+            vox_core::state::ModelRuntimeInfo {
+                state: vox_core::state::ModelRuntimeState::Loading,
+                vram_bytes: None,
+                benchmark: None,
+                custom_path: None,
+            },
+        );
         update_overlay_state(cx);
     });
 
@@ -562,6 +611,15 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
 
     cx.update(|cx| {
         cx.global::<VoxState>().set_llm_processor(llm_processor);
+        cx.global::<VoxState>().set_model_runtime(
+            models::MODELS[2].name.to_string(),
+            vox_core::state::ModelRuntimeInfo {
+                state: vox_core::state::ModelRuntimeState::Loaded,
+                vram_bytes: Some(2200 * 1024 * 1024),
+                benchmark: None,
+                custom_path: None,
+            },
+        );
         cx.global::<VoxState>().set_readiness(AppReadiness::Ready);
         update_overlay_state(cx);
     });

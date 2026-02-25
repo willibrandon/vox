@@ -113,7 +113,7 @@ impl Pipeline {
             let mut resampler_opt =
                 crate::audio::AudioResampler::new(native_sample_rate, 16000);
             let mut state_machine = VadStateMachine::new(vad_config.clone());
-            let mut chunker = SpeechChunker::new(vad_config);
+            let mut chunker = SpeechChunker::new(vad_config.clone());
 
             vad::run_vad_loop(
                 &mut consumer,
@@ -123,6 +123,7 @@ impl Pipeline {
                 &mut chunker,
                 &segment_tx,
                 &stop_flag,
+                &vad_config,
             )
         });
 

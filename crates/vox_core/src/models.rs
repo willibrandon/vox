@@ -256,6 +256,15 @@ pub(crate) fn cleanup_tmp_in_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Result of a model inference benchmark.
+#[derive(Clone, Debug)]
+pub struct BenchmarkResult {
+    /// Name of the metric (e.g., "Real-time factor", "Tokens/sec").
+    pub metric_name: String,
+    /// Numeric value of the metric.
+    pub value: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

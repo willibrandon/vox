@@ -131,6 +131,21 @@ pub struct Settings {
     pub command_prefix: String,
     /// Whether to persist transcript history to the database.
     pub save_history: bool,
+
+    // --- Window position (4 fields) ---
+
+    /// Saved settings window X position (pixels from left).
+    #[serde(default)]
+    pub window_x: Option<f32>,
+    /// Saved settings window Y position (pixels from top).
+    #[serde(default)]
+    pub window_y: Option<f32>,
+    /// Saved settings window width in pixels.
+    #[serde(default)]
+    pub window_width: Option<f32>,
+    /// Saved settings window height in pixels.
+    #[serde(default)]
+    pub window_height: Option<f32>,
 }
 
 impl Default for Settings {
@@ -159,6 +174,10 @@ impl Default for Settings {
             overlap_ms: 1_000,
             command_prefix: "hey vox".into(),
             save_history: true,
+            window_x: None,
+            window_y: None,
+            window_width: None,
+            window_height: None,
         }
     }
 }

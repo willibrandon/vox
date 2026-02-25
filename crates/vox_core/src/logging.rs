@@ -8,7 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+
+use crate::log_sink::{LogReceiver, LogSink};
 
 /// Guard that flushes pending log entries when dropped.
 ///
@@ -18,13 +22,14 @@ pub struct LoggingGuard {
     _guard: WorkerGuard,
 }
 
-/// Initialize structured logging with daily file rotation.
+/// Initialize structured logging with daily file rotation and UI log capture.
 ///
 /// Creates the log directory if needed, sets up a daily rotating file appender,
-/// configures env-filter (`VOX_LOG` > `RUST_LOG` > default), and cleans up logs
-/// older than 7 days. Returns a guard that must be held for the application
-/// lifetime.
-pub fn init_logging() -> LoggingGuard {
+/// configures env-filter (`VOX_LOG` > `RUST_LOG` > default), adds a [`LogSink`]
+/// layer for routing events to the log panel, and cleans up logs older than 7
+/// days. Returns a guard (must be held for the application lifetime) and a
+/// [`LogReceiver`] to pass to `VoxState` for the log panel.
+pub fn init_logging() -> (LoggingGuard, LogReceiver) {
     let dir = log_dir();
     fs::create_dir_all(&dir).ok();
 
@@ -38,14 +43,20 @@ pub fn init_logging() -> LoggingGuard {
             EnvFilter::new("info,vox=info,vox_core=info,vox_ui=info")
         });
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(non_blocking)
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(non_blocking);
+
+    let (log_sink, log_receiver) = LogSink::new();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(log_sink)
         .init();
 
     cleanup_old_logs(&dir, 7);
 
-    LoggingGuard { _guard: guard }
+    (LoggingGuard { _guard: guard }, log_receiver)
 }
 
 /// Platform-specific log directory path.
