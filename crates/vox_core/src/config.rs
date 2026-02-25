@@ -10,6 +10,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::hotkey_interpreter::ActivationMode;
+
 /// Overlay HUD placement on screen.
 ///
 /// Determines where the dictation overlay appears. `Custom` allows the user
@@ -54,12 +56,12 @@ pub enum ThemeMode {
 /// and backward-compatible (uses defaults for missing fields) via
 /// `#[serde(default)]`.
 ///
-/// 23 fields across 7 categories:
+/// 22 fields across 7 categories:
 /// - Audio (2): input_device, noise_gate
 /// - VAD (3): vad_threshold, min_silence_ms, min_speech_ms
 /// - ASR (2): language, whisper_model
 /// - LLM (5): llm_model, temperature, remove_fillers, course_correction, punctuation
-/// - Hotkey (3): activation_hotkey, hold_to_talk, hands_free_double_press
+/// - Hotkey (2): activation_hotkey, activation_mode
 /// - Appearance (4): overlay_position, overlay_opacity, show_raw_transcript, theme
 /// - Advanced (4): max_segment_ms, overlap_ms, command_prefix, save_history
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -101,14 +103,13 @@ pub struct Settings {
     /// Whether to add punctuation to raw transcriptions.
     pub punctuation: bool,
 
-    // --- Hotkey (3 fields) ---
+    // --- Hotkey (2 fields) ---
 
     /// Keyboard shortcut to activate/deactivate dictation.
     pub activation_hotkey: String,
-    /// If true, hold-to-talk (push-to-talk). If false, toggle on/off.
-    pub hold_to_talk: bool,
-    /// If true, double-pressing the hotkey enables hands-free continuous mode.
-    pub hands_free_double_press: bool,
+    /// Recording trigger behavior: hold-to-talk, toggle, or hands-free.
+    #[serde(default)]
+    pub activation_mode: ActivationMode,
 
     // --- Appearance (4 fields) ---
 
@@ -164,8 +165,7 @@ impl Default for Settings {
             course_correction: true,
             punctuation: true,
             activation_hotkey: "Ctrl+Shift+Space".into(),
-            hold_to_talk: true,
-            hands_free_double_press: true,
+            activation_mode: ActivationMode::default(),
             overlay_position: OverlayPosition::TopCenter,
             overlay_opacity: 0.85,
             show_raw_transcript: false,
@@ -273,8 +273,7 @@ mod tests {
         assert!(settings.course_correction);
         assert!(settings.punctuation);
         assert_eq!(settings.activation_hotkey, "Ctrl+Shift+Space");
-        assert!(settings.hold_to_talk);
-        assert!(settings.hands_free_double_press);
+        assert_eq!(settings.activation_mode, ActivationMode::HoldToTalk);
         assert_eq!(settings.overlay_position, OverlayPosition::TopCenter);
         assert_eq!(settings.overlay_opacity, 0.85);
         assert!(!settings.show_raw_transcript);
@@ -302,8 +301,7 @@ mod tests {
         settings.course_correction = false;
         settings.punctuation = false;
         settings.activation_hotkey = "F1".into();
-        settings.hold_to_talk = false;
-        settings.hands_free_double_press = false;
+        settings.activation_mode = ActivationMode::Toggle;
         settings.overlay_position = OverlayPosition::BottomRight;
         settings.overlay_opacity = 0.5;
         settings.show_raw_transcript = true;
@@ -328,8 +326,7 @@ mod tests {
         assert!(!loaded.course_correction);
         assert!(!loaded.punctuation);
         assert_eq!(loaded.activation_hotkey, "F1");
-        assert!(!loaded.hold_to_talk);
-        assert!(!loaded.hands_free_double_press);
+        assert_eq!(loaded.activation_mode, ActivationMode::Toggle);
         assert_eq!(loaded.overlay_position, OverlayPosition::BottomRight);
         assert_eq!(loaded.overlay_opacity, 0.5);
         assert!(loaded.show_raw_transcript);

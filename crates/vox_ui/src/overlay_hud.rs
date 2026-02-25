@@ -27,6 +27,14 @@ use vox_core::models::DownloadProgress;
 use vox_core::pipeline::state::PipelineState;
 use vox_core::state::{AppReadiness, VoxState};
 
+/// Stores the overlay window handle for visibility toggling via [`ToggleOverlay`].
+///
+/// Set by [`open_overlay_window`] and read by the `ToggleOverlay` action handler
+/// in `key_bindings.rs`. `None` if the overlay has not been opened yet.
+pub struct OverlayWindowHandle(pub Option<WindowHandle<OverlayHud>>);
+
+impl gpui::Global for OverlayWindowHandle {}
+
 /// Reactive bridge between VoxState and the overlay HUD.
 ///
 /// GPUI's `observe_global` triggers when a global is replaced via `set_global()`.
@@ -67,6 +75,9 @@ pub struct OverlayHud {
     quick_settings_open: bool,
     /// Whether the injected text is currently showing (2-second fade timer).
     showing_injected_fade: bool,
+    /// Whether the overlay is visible. Toggled by the `ToggleOverlay` action.
+    /// When false, renders an empty transparent div and hides via OS API.
+    visible: bool,
     /// Active subscriptions (observe_global, observe_window_bounds).
     _subscriptions: Vec<Subscription>,
     /// Background task for waveform animation timer (30fps during Listening).
@@ -101,6 +112,7 @@ impl OverlayHud {
             waveform_samples: VecDeque::with_capacity(WAVEFORM_CAPACITY),
             quick_settings_open: false,
             showing_injected_fade: false,
+            visible: true,
             _subscriptions: subscriptions,
             _waveform_task: None,
             _fade_task: None,
@@ -191,6 +203,15 @@ impl OverlayHud {
                 cx.notify();
             });
         }));
+    }
+
+    /// Toggle the overlay's visibility. Uses OS-level window hiding on
+    /// Windows; on macOS the transparent empty render is sufficient.
+    pub fn toggle_visibility(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.visible = !self.visible;
+        #[cfg(target_os = "windows")]
+        set_window_visible(window, self.visible);
+        cx.notify();
     }
 
     /// Handles window position change. Persists to settings.
@@ -668,11 +689,18 @@ impl OverlayHud {
 
 impl gpui::Render for OverlayHud {
     /// Renders the overlay as a vertical flex container with status bar and content area.
+    /// When hidden, renders an empty transparent div (OS-level hiding handles
+    /// the actual invisibility on Windows; macOS compositing makes transparent
+    /// windows click-through).
     fn render(
         &mut self,
         _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        if !self.visible {
+            return div().into_any_element();
+        }
+
         let theme = cx.global::<VoxTheme>();
         let opacity = cx.global::<VoxState>().settings().overlay_opacity;
 
@@ -689,6 +717,7 @@ impl gpui::Render for OverlayHud {
             .window_control_area(WindowControlArea::Drag)
             .child(self.render_status_bar(cx))
             .child(self.render_content(cx))
+            .into_any_element()
     }
 }
 
@@ -762,6 +791,7 @@ pub fn open_overlay_window(cx: &mut App) -> anyhow::Result<WindowHandle<OverlayH
         cx.new(|cx| OverlayHud::new(window, cx))
     })?;
 
+    cx.set_global(OverlayWindowHandle(Some(handle)));
     tracing::info!("overlay HUD window opened");
     Ok(handle)
 }
@@ -811,6 +841,35 @@ fn set_window_topmost(window: &Window) {
     }
 }
 
+/// Shows or hides the overlay window using Win32 `ShowWindow`.
+///
+/// `SW_HIDE` makes the window invisible at the OS level (no click
+/// interception, no taskbar entry). `SW_SHOWNOACTIVATE` restores it
+/// without stealing focus from the user's current application.
+#[cfg(target_os = "windows")]
+fn set_window_visible(window: &Window, visible: bool) {
+    use raw_window_handle::HasWindowHandle;
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        tracing::warn!("failed to get native window handle for visibility toggle");
+        return;
+    };
+
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        tracing::warn!("unexpected non-Win32 window handle");
+        return;
+    };
+
+    let hwnd = win32.hwnd.get() as isize;
+    const SW_HIDE: i32 = 0;
+    const SW_SHOWNOACTIVATE: i32 = 4;
+
+    let cmd = if visible { SW_SHOWNOACTIVATE } else { SW_HIDE };
+    unsafe {
+        win32_show_window(hwnd, cmd);
+    }
+}
+
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
 unsafe extern "system" {
@@ -824,6 +883,9 @@ unsafe extern "system" {
         cy: i32,
         flags: u32,
     ) -> i32;
+
+    #[link_name = "ShowWindow"]
+    fn win32_show_window(hwnd: isize, cmd_show: i32) -> i32;
 }
 
 /// Map readiness and pipeline state to display label, indicator color, and pulse flag.

@@ -8,6 +8,7 @@ pub mod dictionary;
 pub mod config;
 pub mod models;
 pub mod hotkey;
+pub mod hotkey_interpreter;
 pub mod state;
 pub mod logging;
 pub mod log_sink;

@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -120,6 +121,9 @@ pub struct VoxState {
     log_receiver: RwLock<Option<LogReceiver>>,
     /// Last end-to-end pipeline latency in milliseconds (ASR + LLM + inject).
     last_latency_ms: RwLock<Option<u32>>,
+    /// Channel sender for hotkey re-registration at runtime. Set by the
+    /// hotkey event loop; used by the settings panel's hotkey recorder.
+    hotkey_rebind_tx: parking_lot::Mutex<Option<Sender<String>>>,
 }
 
 impl gpui::Global for VoxState {}
@@ -172,6 +176,7 @@ impl VoxState {
             model_runtime: RwLock::new(HashMap::new()),
             log_receiver: RwLock::new(None),
             last_latency_ms: RwLock::new(None),
+            hotkey_rebind_tx: parking_lot::Mutex::new(None),
         })
     }
 
@@ -393,6 +398,27 @@ impl VoxState {
     /// Take the log receiver (returns None if already taken or not set).
     pub fn take_log_receiver(&self) -> Option<LogReceiver> {
         self.log_receiver.write().take()
+    }
+
+    // --- Hotkey rebind ---
+
+    /// Store the hotkey re-registration channel sender.
+    ///
+    /// Called by the hotkey event loop during setup. The settings panel's
+    /// hotkey recorder uses [`notify_hotkey_change`] to send new bindings.
+    pub fn set_hotkey_rebind_tx(&self, tx: Sender<String>) {
+        *self.hotkey_rebind_tx.lock() = Some(tx);
+    }
+
+    /// Notify the hotkey event loop of a new hotkey binding.
+    ///
+    /// Sends the new hotkey string through the rebind channel. The event
+    /// loop unregisters the old hotkey and registers the new one. Does
+    /// nothing if the channel hasn't been set up yet.
+    pub fn notify_hotkey_change(&self, new_hotkey: &str) {
+        if let Some(tx) = self.hotkey_rebind_tx.lock().as_ref() {
+            let _ = tx.send(new_hotkey.to_string());
+        }
     }
 
     /// Create a transcript writer for pipeline use.

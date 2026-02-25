@@ -13,6 +13,7 @@ use gpui::{
 
 use vox_core::audio::capture::list_input_devices;
 use vox_core::config::{OverlayPosition, Settings, ThemeMode};
+use vox_core::hotkey_interpreter::ActivationMode;
 use vox_core::state::VoxState;
 
 use crate::hotkey_recorder::HotkeyRecorder;
@@ -54,6 +55,8 @@ pub struct SettingsPanel {
     // --- Hotkey controls ---
     /// Recorder for capturing the activation keyboard shortcut.
     hotkey_recorder: Entity<HotkeyRecorder>,
+    /// Dropdown for selecting the activation mode (Hold-to-Talk / Toggle / Hands-Free).
+    activation_mode_select: Entity<Select>,
 
     // --- LLM controls ---
     /// Slider for LLM sampling temperature (0.0–2.0).
@@ -202,17 +205,50 @@ impl SettingsPanel {
             .with_format(|v| format!("{} ms", v as u32))
         });
 
-        // --- Hotkey entity ---
+        // --- Hotkey entities ---
         let hotkey_recorder = cx.new(|cx| {
             HotkeyRecorder::new(
                 cx,
                 settings.activation_hotkey.clone(),
                 move |binding, _window, cx| {
-                    if let Err(err) = cx
-                        .global::<VoxState>()
-                        .update_settings(|s| s.activation_hotkey = binding.to_string())
+                    let new_hotkey = binding.to_string();
+                    let vox = cx.global::<VoxState>();
+                    if let Err(err) =
+                        vox.update_settings(|s| s.activation_hotkey = new_hotkey.clone())
                     {
                         tracing::warn!(%err, "failed to save hotkey");
+                    }
+                    vox.notify_hotkey_change(&new_hotkey);
+                    cx.notify(panel_id);
+                },
+            )
+        });
+
+        let mode_value = match settings.activation_mode {
+            ActivationMode::HoldToTalk => "HoldToTalk",
+            ActivationMode::Toggle => "Toggle",
+            ActivationMode::HandsFree => "HandsFree",
+        };
+        let activation_mode_select = cx.new(|cx| {
+            Select::new(
+                cx,
+                vec![
+                    SelectOption::new("HoldToTalk", "Hold to Talk"),
+                    SelectOption::new("Toggle", "Toggle"),
+                    SelectOption::new("HandsFree", "Hands-Free"),
+                ],
+                mode_value,
+                "Activation Mode",
+                move |value, _window, cx| {
+                    let mode = match value {
+                        "Toggle" => ActivationMode::Toggle,
+                        "HandsFree" => ActivationMode::HandsFree,
+                        _ => ActivationMode::HoldToTalk,
+                    };
+                    if let Err(err) =
+                        cx.global::<VoxState>().update_settings(|s| s.activation_mode = mode)
+                    {
+                        tracing::warn!(%err, "failed to save activation mode");
                     }
                     cx.notify(panel_id);
                 },
@@ -398,6 +434,7 @@ impl SettingsPanel {
             min_silence_slider,
             min_speech_slider,
             hotkey_recorder,
+            activation_mode_select,
             temperature_slider,
             theme_select,
             opacity_slider,
@@ -480,7 +517,6 @@ impl SettingsPanel {
     /// Render the Hotkey settings section.
     fn render_hotkey_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = cx.global::<VoxTheme>();
-        let panel_id = cx.entity_id();
 
         div()
             .flex()
@@ -509,16 +545,7 @@ impl SettingsPanel {
                     )
                     .child(self.hotkey_recorder.clone()),
             )
-            .child(Toggle::new(
-                self.settings.hold_to_talk,
-                "Hold to Talk",
-                toggle_callback(panel_id, |s, enabled| s.hold_to_talk = enabled),
-            ))
-            .child(Toggle::new(
-                self.settings.hands_free_double_press,
-                "Hands-Free (Double Press)",
-                toggle_callback(panel_id, |s, enabled| s.hands_free_double_press = enabled),
-            ))
+            .child(self.activation_mode_select.clone())
     }
 
     /// Render the LLM post-processing settings section.

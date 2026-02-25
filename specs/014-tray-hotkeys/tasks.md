@@ -16,8 +16,8 @@
 
 **Purpose**: New files, module declarations, and assets needed before implementation
 
-- [ ] T001 [P] Create orange 32×32 RGBA tray icon at `assets/icons/tray-downloading.png` matching the style of existing tray icons (use `png` crate to generate programmatically, or create a static asset with the same pixel dimensions and RGBA format as `tray-idle.png`)
-- [ ] T002 [P] Add `pub mod hotkey_interpreter;` declaration to `crates/vox_core/src/vox_core.rs` and add `mod tray;` declaration to `crates/vox/src/main.rs`
+- [x] T001 [P] Create orange 32×32 RGBA tray icon at `assets/icons/tray-downloading.png` matching the style of existing tray icons (use `png` crate to generate programmatically, or create a static asset with the same pixel dimensions and RGBA format as `tray-idle.png`)
+- [x] T002 [P] Add `pub mod hotkey_interpreter;` declaration to `crates/vox_core/src/vox_core.rs` and add `mod tray;` declaration to `crates/vox/src/main.rs`
 
 ---
 
@@ -27,10 +27,10 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 [P] Implement `ActivationMode` enum (HoldToTalk/Toggle/HandsFree with serde kebab-case + Default), `HotkeyAction` enum (None/StartRecording/StopRecording/StartHandsFree), and `HotkeyInterpreter` struct with `new()`, `on_press(is_recording) -> HotkeyAction`, `on_release(is_recording) -> HotkeyAction`, `set_mode()`, `mode()` per behavioral contract tables in `contracts/hotkey-interpreter.md` in `crates/vox_core/src/hotkey_interpreter.rs`
-- [ ] T004 [P] Implement `TrayIconState` enum, `TrayUpdate` enum, `TrayIcons` struct (five pre-decoded `Icon` values), `TrayMenuIds` struct, and helper functions `decode_all_tray_icons()`, `derive_tray_state()`, `create_tray_menu()`, `tooltip_for_state()` per tray management contract in `contracts/hotkey-interpreter.md` in `crates/vox/src/tray.rs`
-- [ ] T005 Write unit tests for HotkeyInterpreter covering: hold-to-talk press→StartRecording and release→StopRecording, toggle first-press→start and second-press→stop, hands-free double-press(<300ms)→StartHandsFree and single-press-while-active→StopRecording, lone single-press→None after 300ms, press-during-recording→StartRecording (new session), mode switching mid-session, and release-when-not-recording→None in `crates/vox_core/tests/hotkey_interpreter_tests.rs`
-- [ ] T006 Replace `hold_to_talk: bool` and `hands_free_double_press: bool` fields with `activation_mode: ActivationMode` in Settings struct — add `#[serde(default)]` so existing settings.json files missing the new field deserialize correctly, update `Default` impl, remove old field references in `crates/vox_core/src/config.rs`
+- [x] T003 [P] Implement `ActivationMode` enum (HoldToTalk/Toggle/HandsFree with serde kebab-case + Default), `HotkeyAction` enum (None/StartRecording/StopRecording/StartHandsFree), and `HotkeyInterpreter` struct with `new()`, `on_press(is_recording) -> HotkeyAction`, `on_release(is_recording) -> HotkeyAction`, `set_mode()`, `mode()` per behavioral contract tables in `contracts/hotkey-interpreter.md` in `crates/vox_core/src/hotkey_interpreter.rs`
+- [x] T004 [P] Implement `TrayIconState` enum, `TrayUpdate` enum, `TrayIcons` struct (five pre-decoded `Icon` values), `TrayMenuIds` struct, and helper functions `decode_all_tray_icons()`, `derive_tray_state()`, `create_tray_menu()`, `tooltip_for_state()` per tray management contract in `contracts/hotkey-interpreter.md` in `crates/vox/src/tray.rs`
+- [x] T005 Write unit tests for HotkeyInterpreter covering: hold-to-talk press→StartRecording and release→StopRecording, toggle first-press→start and second-press→stop, hands-free double-press(<300ms)→StartHandsFree and single-press-while-active→StopRecording, lone single-press→None after 300ms, press-during-recording→StartRecording (new session), mode switching mid-session, and release-when-not-recording→None in `crates/vox_core/tests/hotkey_interpreter_tests.rs`
+- [x] T006 Replace `hold_to_talk: bool` and `hands_free_double_press: bool` fields with `activation_mode: ActivationMode` in Settings struct — add `#[serde(default)]` so existing settings.json files missing the new field deserialize correctly, update `Default` impl, remove old field references in `crates/vox_core/src/config.rs`
 
 **Checkpoint**: `cargo test -p vox_core --features cuda` passes all HotkeyInterpreter unit tests. `cargo build -p vox --features vox_core/cuda` compiles with new tray.rs module and updated Settings. All five tray icons decode without error.
 
@@ -44,9 +44,9 @@
 
 ### Implementation
 
-- [ ] T007 [US1][US5] Rewrite hotkey event loop in `crates/vox/src/main.rs` — instantiate `HotkeyInterpreter` with mode from `VoxState.settings().activation_mode`, reduce polling timer from 50ms to 5ms, handle `GlobalHotKeyEvent.state` field (`HotKeyState::Pressed` → `interpreter.on_press()`, `HotKeyState::Released` → `interpreter.on_release()`), read `is_recording` from `VoxState` recording session state. Handle hotkey registration failure: on macOS, if Input Monitoring permission is denied, show error overlay with guidance to enable it in System Settings (FR-013); handle the macOS permission prompt that fires on first registration (FR-024)
-- [ ] T008 [US1][US5] Add universal hotkey response before interpreter dispatch in `crates/vox/src/main.rs` — on every hotkey event, check `AppReadiness` first: if `Downloading`/`Loading`/`Error`, show overlay (ensure overlay window is visible) and skip interpreter; if `Ready`, proceed to interpreter → action dispatch. Read current `activation_mode` from VoxState and call `interpreter.set_mode()` before each event
-- [ ] T009 [US1] Wire `HotkeyAction` variants to pipeline actions in `crates/vox/src/main.rs` — `StartRecording`/`StartHandsFree` → dispatch `ToggleRecording` (start new recording session), `StopRecording` → stop current recording session (drop command channel), `None` → no-op. Replace the existing simple `ToggleRecording` dispatch with this mode-aware logic
+- [x] T007 [US1][US5] Rewrite hotkey event loop in `crates/vox/src/main.rs` — instantiate `HotkeyInterpreter` with mode from `VoxState.settings().activation_mode`, reduce polling timer from 50ms to 5ms, handle `GlobalHotKeyEvent.state` field (`HotKeyState::Pressed` → `interpreter.on_press()`, `HotKeyState::Released` → `interpreter.on_release()`), read `is_recording` from `VoxState` recording session state. Handle hotkey registration failure: on macOS, if Input Monitoring permission is denied, show error overlay with guidance to enable it in System Settings (FR-013); handle the macOS permission prompt that fires on first registration (FR-024)
+- [x] T008 [US1][US5] Add universal hotkey response before interpreter dispatch in `crates/vox/src/main.rs` — on every hotkey event, check `AppReadiness` first: if `Downloading`/`Loading`/`Error`, show overlay (ensure overlay window is visible) and skip interpreter; if `Ready`, proceed to interpreter → action dispatch. Read current `activation_mode` from VoxState and call `interpreter.set_mode()` before each event
+- [x] T009 [US1] Wire `HotkeyAction` variants to pipeline actions in `crates/vox/src/main.rs` — `StartRecording`/`StartHandsFree` → dispatch `ToggleRecording` (start new recording session), `StopRecording` → stop current recording session (drop command channel), `None` → no-op. Replace the existing simple `ToggleRecording` dispatch with this mode-aware logic
 
 **Checkpoint**: Hold-to-talk works end-to-end (press=start, release=stop). Pressing hotkey during download/loading/error shows overlay with status. Polling interval is 5ms. `cargo build` zero warnings.
 
@@ -60,11 +60,11 @@
 
 ### Implementation
 
-- [ ] T010 [P] [US2] Replace `hold_to_talk` and `hands_free_double_press` boolean toggles with an activation mode dropdown selector (Hold-to-Talk / Toggle / Hands-Free) in the hotkey section of `crates/vox_ui/src/settings_panel.rs` — on change callback updates `VoxState.settings.activation_mode` via `update_settings()`, interpreter reads new mode on next hotkey event
-- [ ] T011 [P] [US4] Create `std::sync::mpsc::channel::<TrayUpdate>()` in `crates/vox/src/main.rs` — pass `Sender` to the state-forwarding task and `Receiver` to the tray polling task. In state-forwarding task, after updating `OverlayDisplayState`, call `derive_tray_state()` and send `TrayUpdate::SetState` on every `AppReadiness` or `PipelineState` change
-- [ ] T012 [US4] Implement dynamic icon switching in tray polling loop in `crates/vox/src/main.rs` — poll `TrayUpdate` receiver with `try_recv()` alongside existing `MenuEvent` polling, on `SetState` call `tray_icon.set_icon()` with the matching pre-decoded icon from `TrayIcons` and `tray_icon.set_tooltip()` with `tooltip_for_state()`
-- [ ] T013 [US4] Replace 3-item tray menu with 6-item menu using `create_tray_menu()` from `tray.rs` in `crates/vox/src/main.rs` — wire new menu events: Toggle Recording → start/stop recording (simple toggle bypassing activation mode), Settings → `OpenSettings` action, Show/Hide Overlay → `ToggleOverlay` action, About Vox → show version info, Quit → `cx.quit()`
-- [ ] T014 [US4] Add dynamic menu item text updates in `crates/vox/src/main.rs` — when recording state changes, call `toggle_item.set_text("Stop Recording")` or `toggle_item.set_text("Start Recording")` on the Toggle Recording menu item. Update alongside tray icon state changes in the polling loop
+- [x] T010 [P] [US2] Replace `hold_to_talk` and `hands_free_double_press` boolean toggles with an activation mode dropdown selector (Hold-to-Talk / Toggle / Hands-Free) in the hotkey section of `crates/vox_ui/src/settings_panel.rs` — on change callback updates `VoxState.settings.activation_mode` via `update_settings()`, interpreter reads new mode on next hotkey event
+- [x] T011 [P] [US4] Create `std::sync::mpsc::channel::<TrayUpdate>()` in `crates/vox/src/main.rs` — pass `Sender` to the state-forwarding task and `Receiver` to the tray polling task. In state-forwarding task, after updating `OverlayDisplayState`, call `derive_tray_state()` and send `TrayUpdate::SetState` on every `AppReadiness` or `PipelineState` change
+- [x] T012 [US4] Implement dynamic icon switching in tray polling loop in `crates/vox/src/main.rs` — poll `TrayUpdate` receiver with `try_recv()` alongside existing `MenuEvent` polling, on `SetState` call `tray_icon.set_icon()` with the matching pre-decoded icon from `TrayIcons` and `tray_icon.set_tooltip()` with `tooltip_for_state()`
+- [x] T013 [US4] Replace 3-item tray menu with 6-item menu using `create_tray_menu()` from `tray.rs` in `crates/vox/src/main.rs` — wire new menu events: Toggle Recording → start/stop recording (simple toggle bypassing activation mode), Settings → `OpenSettings` action, Show/Hide Overlay → `ToggleOverlay` action, About Vox → show version info, Quit → `cx.quit()`
+- [x] T014 [US4] Add dynamic menu item text updates in `crates/vox/src/main.rs` — when recording state changes, call `toggle_item.set_text("Stop Recording")` or `toggle_item.set_text("Start Recording")` on the Toggle Recording menu item. Update alongside tray icon state changes in the polling loop
 
 **Checkpoint**: Toggle mode works via settings dropdown. Tray icon updates within 10ms of state transitions. All 6 menu items functional. Menu text reflects recording state.
 
@@ -80,8 +80,8 @@
 
 ### Implementation
 
-- [ ] T015 [US6] Implement hotkey re-registration channel in `crates/vox/src/main.rs` — create `std::sync::mpsc::channel::<String>()` for new hotkey strings, poll `Receiver` in the hotkey event loop with `try_recv()`, on receiving new hotkey string: unregister old hotkey via `manager.unregister()`, parse new string with `.parse::<HotKey>()`, register new hotkey via `manager.register()`, update `Arc<AtomicU32>` with new `hotkey.id()` for event matching. On Windows, if CapsLock is the new hotkey, suppress its normal toggle behavior by not calling `CallNextHookEx` (FR-023)
-- [ ] T016 [US6] Wire settings panel hotkey recorder on-change callback to send new hotkey string through re-registration channel in `crates/vox/src/main.rs` — pass the `Sender<String>` clone to the settings window setup so the `HotkeyRecorder` callback can send the new binding when the user records a new key combination
+- [x] T015 [US6] Implement hotkey re-registration channel in `crates/vox/src/main.rs` — create `std::sync::mpsc::channel::<String>()` for new hotkey strings, poll `Receiver` in the hotkey event loop with `try_recv()`, on receiving new hotkey string: unregister old hotkey via `manager.unregister()`, parse new string with `.parse::<HotKey>()`, register new hotkey via `manager.register()`, update `Arc<AtomicU32>` with new `hotkey.id()` for event matching. On Windows, if CapsLock is the new hotkey, suppress its normal toggle behavior by not calling `CallNextHookEx` (FR-023)
+- [x] T016 [US6] Wire settings panel hotkey recorder on-change callback to send new hotkey string through re-registration channel in `crates/vox/src/main.rs` — pass the `Sender<String>` clone to the settings window setup so the `HotkeyRecorder` callback can send the new binding when the user records a new key combination
 
 **Checkpoint**: Hotkey remapping works at runtime. Old binding deregistered immediately. New binding works in any application. All three activation modes work with remapped hotkey.
 
@@ -91,8 +91,8 @@
 
 **Purpose**: Final validation across all user stories
 
-- [ ] T017 Verify zero compiler warnings with `cargo build -p vox --features vox_core/cuda`
-- [ ] T018 Run full unit test suite with `cargo test -p vox_core --features cuda` — all HotkeyInterpreter tests pass
+- [x] T017 Verify zero compiler warnings with `cargo build -p vox --features vox_core/cuda`
+- [x] T018 Run full unit test suite with `cargo test -p vox_core --features cuda` — all HotkeyInterpreter tests pass
 - [ ] T019 Execute quickstart.md manual verification checklist for all 5 areas: activation modes (hold-to-talk, toggle, hands-free), dynamic tray icons, tray context menu, hotkey remapping, universal hotkey response
 
 ---

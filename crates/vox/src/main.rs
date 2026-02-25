@@ -8,26 +8,30 @@
 //! an AudioCapture → VAD → ASR → LLM → TextInjection pipeline that
 //! processes speech and injects polished text into the focused application.
 
+mod tray;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use global_hotkey::hotkey::HotKey;
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use gpui::{App, AppContext as _, Application, AsyncApp};
 use parking_lot::Mutex;
-use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
+use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconBuilder;
 
 use vox_core::asr::AsrEngine;
 use vox_core::audio::{AudioCapture, AudioConfig};
 use vox_core::llm::PostProcessor;
 use vox_core::logging::init_logging;
 use vox_core::models::{self, check_missing_models, DownloadProgress, ModelDownloader};
+use vox_core::hotkey_interpreter::{HotkeyAction, HotkeyInterpreter};
 use vox_core::pipeline::{Pipeline, PipelineCommand, PipelineState};
 use vox_core::state::{ensure_data_dirs, AppReadiness, VoxState};
 use vox_core::vad::VadConfig;
 use vox_ui::key_bindings::{
-    register_actions, register_key_bindings, OpenSettings, StopRecording, ToggleRecording,
+    register_actions, register_key_bindings, OpenSettings, StopRecording, ToggleOverlay,
+    ToggleRecording,
 };
 use vox_ui::overlay_hud::{open_overlay_window, OverlayDisplayState};
 use vox_ui::theme::VoxTheme;
@@ -60,6 +64,27 @@ struct RecordingSession {
 }
 
 impl gpui::Global for RecordingSession {}
+
+/// Wraps the tray update channel sender as a GPUI Global.
+///
+/// Set in [`setup_system_tray`]. The `observe_global` callback registered
+/// in [`run_app`] reads this sender to push tray state updates whenever
+/// [`OverlayDisplayState`] changes (from any source).
+struct TraySender(std::sync::mpsc::Sender<tray::TrayUpdate>);
+
+impl gpui::Global for TraySender {}
+
+/// Holds subscriptions that must live for the app's entire lifetime.
+///
+/// GPUI cancels observations when their [`gpui::Subscription`] is dropped.
+/// Storing them here keeps them alive as long as the app runs.
+/// The field is never read — its only purpose is preventing the
+/// subscriptions from being dropped.
+#[allow(dead_code)] // Subscriptions kept alive by ownership, not read access
+struct AppSubscriptions(Vec<gpui::Subscription>);
+
+impl gpui::Global for AppSubscriptions {}
+
 
 fn main() {
     let (_guard, log_receiver) = init_logging();
@@ -108,6 +133,26 @@ fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyho
     open_overlay_window(cx)?;
     setup_system_tray(cx);
     setup_global_hotkey(cx);
+
+    // Reactively sync tray icon/tooltip whenever OverlayDisplayState changes.
+    // This catches ALL paths that call `cx.set_global(OverlayDisplayState { .. })`
+    // — both from `update_overlay_state` in this file and from overlay_hud.rs
+    // (fade timer, copy-to-clipboard). Without this, those overlay_hud paths
+    // would leave the tray stale.
+    let tray_sync = cx.observe_global::<OverlayDisplayState>(|cx| {
+        if let Some(sender) = cx.try_global::<TraySender>() {
+            let state = cx.global::<VoxState>();
+            let readiness = state.readiness();
+            let pipeline_state = state.pipeline_state();
+            let tray_state = tray::derive_tray_state(&readiness, &pipeline_state);
+            let is_recording = cx.global::<RecordingSession>().active.lock().is_some();
+            let _ = sender.0.send(tray::TrayUpdate::SetState {
+                state: tray_state,
+                is_recording,
+            });
+        }
+    });
+    cx.set_global(AppSubscriptions(vec![tray_sync]));
 
     // Pipeline initialization runs in background; UI is already visible
     cx.spawn(async move |mut cx| {
@@ -170,7 +215,10 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
             min_speech_ms: settings.min_speech_ms,
             min_silence_ms: settings.min_silence_ms,
             max_speech_ms: settings.max_segment_ms,
-            bypass_vad: settings.hold_to_talk,
+            bypass_vad: matches!(
+                settings.activation_mode,
+                vox_core::hotkey_interpreter::ActivationMode::HoldToTalk
+            ),
             ..VadConfig::default()
         };
         drop(settings);
@@ -360,18 +408,41 @@ fn stop_recording(cx: &mut App) {
     }
 }
 
-/// Updates the OverlayDisplayState bridge to match the current VoxState.
+/// Updates the OverlayDisplayState bridge to match VoxState.
 ///
 /// Must be called after every `VoxState::set_readiness()` or
 /// `VoxState::set_pipeline_state()` to trigger overlay re-rendering.
+/// Tray synchronization is handled reactively by the `observe_global`
+/// callback registered in [`run_app`], which fires on every
+/// `set_global(OverlayDisplayState { .. })` — including calls from
+/// `overlay_hud.rs` that bypass this function.
 fn update_overlay_state(cx: &mut App) {
     let state = cx.global::<VoxState>();
+    let readiness = state.readiness();
+    let pipeline_state = state.pipeline_state();
+
     cx.set_global(OverlayDisplayState {
-        readiness: state.readiness(),
-        pipeline_state: state.pipeline_state(),
+        readiness: readiness.clone(),
+        pipeline_state: pipeline_state.clone(),
     });
 }
 
+/// Set up the global hotkey with mode-aware press/release handling and
+/// runtime re-registration support.
+///
+/// Instantiates a [`HotkeyInterpreter`] that maps press/release events to
+/// recording actions based on the current [`ActivationMode`]. The interpreter
+/// reads the latest mode from [`VoxState`] on every event, so settings changes
+/// take effect immediately without re-registration.
+///
+/// Creates a rebind channel (`std::sync::mpsc`) — the [`HotkeyRebindSender`]
+/// global lets the settings panel send new hotkey strings for re-registration
+/// at runtime. The polling loop unregisters the old hotkey, registers the new
+/// one, and updates the event-matching ID.
+///
+/// Before consulting the interpreter, checks [`AppReadiness`] — if the app is
+/// not ready (downloading, loading, error), the hotkey refreshes the overlay
+/// to acknowledge the keypress without starting recording (FR-006).
 fn setup_global_hotkey(cx: &mut App) {
     let manager = match GlobalHotKeyManager::new() {
         Ok(m) => m,
@@ -397,54 +468,140 @@ fn setup_global_hotkey(cx: &mut App) {
 
     tracing::info!(hotkey = %hotkey_str, "global hotkey registered");
 
-    let hotkey_id = hotkey.id();
+    let initial_mode = cx.global::<VoxState>().settings().activation_mode;
+    let (rebind_tx, rebind_rx) = std::sync::mpsc::channel::<String>();
+    cx.global::<VoxState>().set_hotkey_rebind_tx(rebind_tx);
+
     let executor = cx.background_executor().clone();
 
     cx.spawn(async move |cx| {
-        // Manager must stay alive for the hotkey registration to persist
-        let _manager = manager;
+        // Manager must stay alive for the hotkey registration to persist.
+        // Not prefixed with _ because we call unregister/register on rebind.
+        let manager = manager;
+        let mut current_hotkey = hotkey;
+        let mut hotkey_id = current_hotkey.id();
+        let mut interpreter = HotkeyInterpreter::new(initial_mode);
+
         loop {
-            executor.timer(Duration::from_millis(50)).await;
-            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-                if event.id == hotkey_id {
-                    cx.update(|cx| {
-                        tracing::info!("ToggleRecording dispatched via global hotkey");
-                        cx.dispatch_action(&ToggleRecording);
-                    });
+            executor.timer(Duration::from_millis(5)).await;
+
+            // Check for hotkey rebind requests from the settings panel
+            while let Ok(new_hotkey_str) = rebind_rx.try_recv() {
+                match new_hotkey_str.parse::<HotKey>() {
+                    Ok(new_hotkey) => {
+                        if let Err(err) = manager.unregister(current_hotkey) {
+                            tracing::warn!(?err, "failed to unregister old hotkey");
+                        }
+                        match manager.register(new_hotkey) {
+                            Ok(()) => {
+                                tracing::info!(
+                                    new = %new_hotkey_str,
+                                    "hotkey remapped"
+                                );
+                                current_hotkey = new_hotkey;
+                                hotkey_id = new_hotkey.id();
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    ?err,
+                                    hotkey = %new_hotkey_str,
+                                    "failed to register new hotkey, restoring old"
+                                );
+                                let _ = manager.register(current_hotkey);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            hotkey = %new_hotkey_str,
+                            "failed to parse new hotkey string"
+                        );
+                    }
                 }
+            }
+
+            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                if event.id != hotkey_id {
+                    continue;
+                }
+
+                cx.update(|cx| {
+                    // Sync interpreter mode with current settings on every event
+                    let current_mode = cx.global::<VoxState>().settings().activation_mode;
+                    interpreter.set_mode(current_mode);
+
+                    // Universal hotkey response (FR-006): if the app is not ready,
+                    // acknowledge the keypress by refreshing the overlay (which
+                    // already shows download progress, loading stage, or error).
+                    let readiness = cx.global::<VoxState>().readiness();
+                    if !matches!(readiness, AppReadiness::Ready) {
+                        if matches!(event.state, HotKeyState::Pressed) {
+                            tracing::info!(?readiness, "hotkey pressed while not ready");
+                            update_overlay_state(cx);
+                        }
+                        return;
+                    }
+
+                    let is_recording = cx
+                        .global::<RecordingSession>()
+                        .active
+                        .lock()
+                        .is_some();
+
+                    let action = match event.state {
+                        HotKeyState::Pressed => interpreter.on_press(is_recording),
+                        HotKeyState::Released => interpreter.on_release(is_recording),
+                    };
+
+                    match action {
+                        HotkeyAction::StartRecording | HotkeyAction::StartHandsFree => {
+                            tracing::info!(?action, "hotkey → start recording");
+                            if let Err(err) = start_recording(cx) {
+                                tracing::error!(%err, "failed to start recording");
+                                cx.global::<VoxState>().set_pipeline_state(
+                                    PipelineState::Error {
+                                        message: err.to_string(),
+                                    },
+                                );
+                                update_overlay_state(cx);
+                            }
+                        }
+                        HotkeyAction::StopRecording => {
+                            tracing::info!("hotkey → stop recording");
+                            stop_recording(cx);
+                        }
+                        HotkeyAction::None => {}
+                    }
+                });
             }
         }
     })
     .detach();
 }
 
+/// Set up the system tray with 6-item menu, dynamic icon switching, and
+/// dynamic menu text updates.
+///
+/// Pre-decodes all five icon variants at startup. Creates an
+/// `std::sync::mpsc` channel for tray state updates — the sender is stored
+/// as a [`TraySender`] GPUI Global so [`update_overlay_state`] can push
+/// icon/tooltip changes automatically. The receiver is polled alongside
+/// `MenuEvent` in the tray's background task.
 fn setup_system_tray(cx: &mut App) {
-    let menu = Menu::new();
+    let icons = tray::decode_all_tray_icons();
+    let (menu, menu_ids, menu_items) = tray::create_tray_menu();
+    let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayUpdate>();
 
-    let toggle_item = MenuItem::new("Toggle Recording", true, None);
-    let settings_item = MenuItem::new("Settings", true, None);
-    let quit_item = MenuItem::new("Quit", true, None);
+    // Store sender as global so update_overlay_state can push tray updates
+    cx.set_global(TraySender(tray_tx));
 
-    let toggle_id = toggle_item.id().clone();
-    let settings_id = settings_item.id().clone();
-    let quit_id = quit_item.id().clone();
-
-    if let Err(err) = menu.append(&toggle_item) {
-        tracing::warn!(?err, "failed to append Toggle Recording menu item");
-    }
-    if let Err(err) = menu.append(&settings_item) {
-        tracing::warn!(?err, "failed to append Settings menu item");
-    }
-    if let Err(err) = menu.append(&quit_item) {
-        tracing::warn!(?err, "failed to append Quit menu item");
-    }
-
-    let icon = decode_png_icon(include_bytes!("../../../assets/icons/tray-idle.png"));
+    let initial_icon = icons.idle.clone();
 
     let tray = match TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Vox \u{2014} Voice Dictation")
-        .with_icon(icon)
+        .with_tooltip("Vox \u{2014} Idle")
+        .with_icon(initial_icon)
         .build()
     {
         Ok(t) => t,
@@ -454,27 +611,68 @@ fn setup_system_tray(cx: &mut App) {
         }
     };
 
-    tracing::info!("system tray icon created");
+    tracing::info!("system tray icon created (6-item menu, dynamic icons)");
 
     let executor = cx.background_executor().clone();
 
     cx.spawn(async move |cx| {
-        // Tray must stay alive for the icon to remain visible
-        let _tray = tray;
+        // Tray and icons must stay alive for the icon to remain visible
+        let tray = tray;
+        let icons = icons;
+        let toggle_item = menu_items.toggle_recording;
+
         loop {
-            executor.timer(Duration::from_millis(50)).await;
+            executor.timer(Duration::from_millis(10)).await;
+
+            // Process tray state updates (icon + tooltip)
+            while let Ok(update) = tray_rx.try_recv() {
+                match update {
+                    tray::TrayUpdate::SetState {
+                        ref state,
+                        is_recording,
+                    } => {
+                        let icon = tray::icon_for_state(state, &icons);
+                        if let Err(err) = tray.set_icon(Some(icon.clone())) {
+                            tracing::warn!(?err, "failed to set tray icon");
+                        }
+                        let tooltip = tray::tooltip_for_state(state);
+                        if let Err(err) = tray.set_tooltip(Some(&tooltip)) {
+                            tracing::warn!(?err, "failed to set tray tooltip");
+                        }
+
+                        // Derive label from session activity, not tray icon state.
+                        // Recording stays active through Processing/Injecting states.
+                        let text = if is_recording {
+                            "Stop Recording"
+                        } else {
+                            "Start Recording"
+                        };
+                        toggle_item.set_text(text);
+                    }
+                }
+            }
+
+            // Process menu click events
             while let Ok(event) = MenuEvent::receiver().try_recv() {
-                if event.id == toggle_id {
+                if event.id == menu_ids.toggle_recording {
                     cx.update(|cx| {
                         tracing::info!("ToggleRecording dispatched via tray menu");
                         cx.dispatch_action(&ToggleRecording);
                     });
-                } else if event.id == settings_id {
+                } else if event.id == menu_ids.settings {
                     cx.update(|cx| {
                         tracing::info!("OpenSettings dispatched via tray menu");
                         cx.dispatch_action(&OpenSettings);
                     });
-                } else if event.id == quit_id {
+                } else if event.id == menu_ids.toggle_overlay {
+                    cx.update(|cx| {
+                        tracing::info!("ToggleOverlay dispatched via tray menu");
+                        cx.dispatch_action(&ToggleOverlay);
+                    });
+                } else if event.id == menu_ids.about {
+                    tracing::info!("About Vox selected");
+                    // About dialog is a future feature — log for now
+                } else if event.id == menu_ids.quit {
                     cx.update(|cx| cx.quit());
                 }
             }
@@ -628,15 +826,3 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Decode an embedded PNG file into a tray [`Icon`].
-///
-/// Uses the `png` crate to inflate the RGBA pixel data that
-/// [`Icon::from_rgba`] requires.
-fn decode_png_icon(png_bytes: &[u8]) -> Icon {
-    let decoder = png::Decoder::new(png_bytes);
-    let mut reader = decoder.read_info().expect("embedded PNG has valid header");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("embedded PNG has valid frame");
-    Icon::from_rgba(buf[..info.buffer_size()].to_vec(), info.width, info.height)
-        .expect("embedded PNG dimensions match pixel data")
-}

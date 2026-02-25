@@ -1,6 +1,6 @@
 # Vox
 
-Local-first intelligent voice dictation engine. Pure Rust, GPUI frontend, GPU-accelerated ML inference. Transforms speech into polished text injected into any application.
+Local-first intelligent voice dictation engine. Pure Rust, [GPUI](https://www.gpui.rs/) frontend, GPU-accelerated ML inference. Transforms speech into polished text injected into any application.
 
 **Pipeline:** Audio Capture → Ring Buffer → Silero VAD (ONNX) → Whisper ASR → Qwen LLM post-processing → Text Injection
 
@@ -22,6 +22,7 @@ Alpha — nearing daily-driver use. Full voice dictation pipeline runs end-to-en
 - **Application state** — VoxState as GPUI Global, JSON settings with atomic write and corrupt-file recovery, SQLite transcript history with search/delete/secure-clear, AppReadiness state machine, privacy-enforced transcript writes
 - **Custom dictionary** — SQLite-backed word mappings with in-memory cache, case-insensitive whole-word substitution, LLM hint integration, use count tracking, command phrase exclusion, JSON import/export
 - **GPUI application shell** — System tray with PNG icons, global hotkey dispatch, structured logging with daily rotation, async pipeline initialization loading ASR and LLM onto GPU before marking Ready
+- **System tray & global hotkeys** — Dynamic tray icon (5 states), 6-item context menu with recording-aware label, three activation modes (hold-to-talk, toggle, hands-free with double-press), runtime hotkey remapping, universal hotkey response in all app states
 - **Overlay HUD** — Always-on-top draggable pill window with state-dependent rendering (download progress, waveform visualizer, transcript preview, injected text fade, error display, quick settings), position persistence with display bounds clamping
 - **Settings window** — Full management window with sidebar navigation, configurable audio/VAD/hotkey/LLM/appearance settings, transcript history browser, dictionary editor, model status, and live log viewer
 
@@ -44,18 +45,20 @@ Alpha — nearing daily-driver use. Full voice dictation pipeline runs end-to-en
 - Xcode 26.x + Command Line Tools
 - Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`
 
-## Build
+## Build & Run
 
 ```bash
-# Windows (CUDA)
-cargo build -p vox --features vox_core/cuda
+# Run (development)
+cargo run -p vox --features vox_core/cuda     # Windows (CUDA)
+cargo run -p vox --features vox_core/metal    # macOS (Metal)
 
-# macOS (Metal)
-cargo build -p vox --features vox_core/metal
+# Build only
+cargo build -p vox --features vox_core/cuda   # Windows
+cargo build -p vox --features vox_core/metal  # macOS
 
 # Tests
-cargo test -p vox_core --features cuda    # Windows
-cargo test -p vox_core --features metal   # macOS
+cargo test -p vox_core --features cuda        # Windows
+cargo test -p vox_core --features metal       # macOS
 
 # Release
 cargo build --release -p vox --features vox_core/cuda

@@ -6,6 +6,7 @@
 
 use gpui::{actions, App, KeyBinding};
 
+use crate::overlay_hud::OverlayWindowHandle;
 use crate::workspace::open_settings_window;
 
 actions!(
@@ -37,8 +38,15 @@ pub fn register_actions(cx: &mut App) {
     // ensures the actions are known to GPUI's action system.
     cx.on_action(|_: &ToggleRecording, _cx| {});
     cx.on_action(|_: &StopRecording, _cx| {});
-    cx.on_action(|_: &ToggleOverlay, _cx| {
-        tracing::info!("ToggleOverlay dispatched");
+    cx.on_action(|_: &ToggleOverlay, cx| {
+        let handle = cx
+            .try_global::<OverlayWindowHandle>()
+            .and_then(|h| h.0);
+        if let Some(handle) = handle {
+            let _ = handle.update(cx, |hud, window, cx| {
+                hud.toggle_visibility(window, cx);
+            });
+        }
     });
     cx.on_action(|_: &OpenSettings, cx| {
         open_settings_window(cx);
