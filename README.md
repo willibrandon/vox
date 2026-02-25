@@ -8,7 +8,7 @@ All processing happens on-device. Audio never leaves the machine.
 
 ## Status
 
-Early development. The three-crate workspace compiles on both platforms.
+Alpha — nearing daily-driver use. Full voice dictation pipeline runs end-to-end on Windows (CUDA) and macOS (Metal).
 
 ### Implemented
 
