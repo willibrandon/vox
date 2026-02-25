@@ -9,3 +9,4 @@
 .env
 *.log
 *.wav
+.DS_Store
