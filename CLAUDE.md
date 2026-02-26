@@ -134,6 +134,8 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 - JSON (settings.json via vox_core), SQLite (vox.db via vox_core for transcripts + dictionary) (013-settings-window)
 - Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97), tray-icon 0.19, global-hotkey 0.6, png 0.17, windows 0.62 (014-tray-hotkeys)
 - JSON (settings.json) — activation mode persisted as kebab-case string (014-tray-hotkeys)
+- Rust 2024 edition (1.85+) + gpui (git rev 89e9ab97, v0.2.2), tracing 0.1, tracing-subscriber 0.3, tracing-appender 0.2, cpal 0.17, windows 0.62 (expanded features), anyhow 1, tokio 1.49, sha2 (existing transitive), parking_lot 0.12, libc 0.2 (macOS GPU/power detection) (015-error-logging-packaging)
+- SQLite via rusqlite 0.38 (existing — transcripts, history deletion), JSON settings (existing — config.rs) (015-error-logging-packaging)
 
 ## Recent Changes
 
