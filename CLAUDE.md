@@ -112,6 +112,8 @@ These are verified compatible. Using wrong versions will cause compile failures 
 - `LlamaModel` is `Send+Sync` → `Arc`. `LlamaContext` is **NOT** → one per inference call.
 - `SileroVad` is **NOT** `Send`/`Sync` (holds ort `Session`) → use on a single processing thread only.
 - cpal audio callback is real-time — no allocations, no locks, no ML. Resampling on processing thread.
+- cpal `list_input_devices()` blocks for hundreds of ms on macOS (Core Audio) — always call from background thread, never GPUI main thread.
+- rubato FFT resampler (`FftFixedIn`) produces chunk-boundary artifacts when fed small variable-sized batches. Accumulate raw samples at native rate, resample the complete buffer once after recording stops.
 - macOS `CGEvent` has undocumented 20-char limit per call — must chunk at UTF-16 code unit boundaries (never split surrogate pairs). Focus detection uses AX API (`AXUIElementCreateApplication` → `kAXFocusedUIElementAttribute`) which requires Accessibility permission. `AXUIElementCopyAttributeValue` follows CF Create/Copy rule — caller must `CFRelease` both the AX element and any returned value. `kAXErrorNoValue` = no focus; `kAXErrorAttributeUnsupported`/`kAXErrorCannotComplete` = AX-incompatible app (proceed optimistically).
 
 ## Commit Style
