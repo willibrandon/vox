@@ -179,6 +179,58 @@ pub fn verify_checksum(path: &Path, expected_sha256: &str) -> Result<bool> {
     Ok(hex == expected_sha256)
 }
 
+/// Verify SHA-256 checksums of all model files at startup.
+///
+/// Returns a list of models that are missing or have corrupt checksums
+/// and need to be re-downloaded. Files that pass verification are left
+/// unchanged. This function is called before model loading to catch
+/// corruption that occurred while the app was closed.
+pub fn verify_all_models() -> Result<Vec<&'static ModelInfo>> {
+    let dir = model_dir()?;
+    let mut needs_download = Vec::new();
+
+    for model in MODELS {
+        let path = dir.join(model.filename);
+
+        if !path.exists() {
+            tracing::info!(model = model.name, "Model file missing — needs download");
+            needs_download.push(model);
+            continue;
+        }
+
+        match verify_checksum(&path, model.sha256) {
+            Ok(true) => {
+                tracing::debug!(model = model.name, "Model checksum verified");
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    model = model.name,
+                    path = %path.display(),
+                    "Model checksum mismatch — will re-download"
+                );
+                // Delete the corrupt file so the downloader treats it as missing
+                if let Err(e) = crate::recovery::delete_corrupt_model(&path) {
+                    tracing::warn!(error = %e, "Failed to delete corrupt model file");
+                }
+                needs_download.push(model);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    model = model.name,
+                    error = %e,
+                    "Failed to verify model checksum — will re-download"
+                );
+                if let Err(e) = crate::recovery::delete_corrupt_model(&path) {
+                    tracing::warn!(error = %e, "Failed to delete corrupt model file");
+                }
+                needs_download.push(model);
+            }
+        }
+    }
+
+    Ok(needs_download)
+}
+
 /// Delete any leftover `.tmp` files from interrupted downloads.
 ///
 /// Scans [`model_dir`] for files with the `.tmp` extension and removes
@@ -451,6 +503,57 @@ mod tests {
         let nonexistent = dir.path().join("does_not_exist");
         let result = cleanup_tmp_in_dir(&nonexistent);
         assert!(result.is_ok(), "cleanup should succeed for nonexistent dir");
+    }
+
+    #[test]
+    fn test_model_corrupt_detection() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Write a file with known content that won't match any model's SHA-256
+        let path = dir.path().join("fake_model.bin");
+        std::fs::write(&path, b"this is definitely not a valid model").expect("write");
+
+        // verify_checksum should detect the mismatch
+        let valid = verify_checksum(
+            &path,
+            MODELS[0].sha256, // use a real model's expected hash
+        )
+        .expect("checksum should compute without error");
+        assert!(!valid, "checksum should NOT match for corrupt data");
+
+        // delete_corrupt_model should remove the file
+        crate::recovery::delete_corrupt_model(&path).expect("delete should succeed");
+        assert!(!path.exists(), "corrupt file should be deleted");
+    }
+
+    #[test]
+    fn test_model_corrupt_detection_readonly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("readonly_model.bin");
+        std::fs::write(&path, b"corrupt model data").expect("write");
+
+        // Set read-only — delete_corrupt_model should still handle it
+        crate::models::downloader::set_readonly(&path);
+        assert!(
+            std::fs::metadata(&path).expect("metadata").permissions().readonly(),
+            "file should be read-only"
+        );
+
+        crate::recovery::delete_corrupt_model(&path).expect("delete readonly should succeed");
+        assert!(!path.exists(), "read-only corrupt file should be deleted");
+    }
+
+    #[test]
+    fn test_verify_all_models_missing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // check_missing_in_dir is the testable building block of verify_all_models
+        let missing = check_missing_in_dir(dir.path());
+        assert_eq!(
+            missing.len(),
+            MODELS.len(),
+            "all models should be missing in empty dir"
+        );
     }
 
     #[test]

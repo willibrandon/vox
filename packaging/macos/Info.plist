@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS application bundle metadata for Vox.
+
+  LSUIElement: true — runs as a menu bar agent (no Dock icon).
+  NSMicrophoneUsageDescription — required for microphone access prompt.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.vox.app</string>
+
+    <key>CFBundleName</key>
+    <string>Vox</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Vox</string>
+
+    <key>CFBundleExecutable</key>
+    <string>vox</string>
+
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>LSUIElement</key>
+    <true/>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Vox needs microphone access to capture speech for dictation.</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

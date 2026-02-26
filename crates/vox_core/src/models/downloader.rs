@@ -338,6 +338,10 @@ impl ModelDownloader {
             )
         })?;
 
+        // Set file to read-only after successful download + verification (FR-027).
+        // Protects against accidental modification or corruption.
+        set_readonly(&final_path);
+
         let _ = self.sender.send(DownloadEvent::Complete {
             model: model.name.to_string(),
         });
@@ -345,9 +349,60 @@ impl ModelDownloader {
         tracing::info!(
             model = model.name,
             path = %final_path.display(),
-            "model downloaded and verified"
+            "model downloaded, verified, and set read-only"
         );
         Ok(())
+    }
+}
+
+/// Set a file to read-only.
+///
+/// Called after successful download + SHA-256 verification to protect
+/// model files from accidental modification. Non-fatal on failure —
+/// the model works fine without read-only protection.
+pub fn set_readonly(path: &Path) {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let mut perms = metadata.permissions();
+            perms.set_readonly(true);
+            if let Err(e) = std::fs::set_permissions(path, perms) {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "failed to set read-only permissions on model file"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "failed to read metadata for read-only permission"
+            );
+        }
+    }
+}
+
+/// Remove read-only permission from a file before deletion or re-download.
+///
+/// Called before deleting a corrupt model file, since `set_readonly` was
+/// applied after the original download. Non-fatal on failure.
+pub fn remove_readonly(path: &Path) {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            if metadata.permissions().readonly() {
+                let mut perms = metadata.permissions();
+                perms.set_readonly(false);
+                if let Err(e) = std::fs::set_permissions(path, perms) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "failed to remove read-only permissions"
+                    );
+                }
+            }
+        }
+        Err(_) => {} // File may not exist — that's fine
     }
 }
 

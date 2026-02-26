@@ -16,9 +16,10 @@ mod macos;
 
 mod commands;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::llm::VoiceCommand;
+use crate::pipeline::state::PipelineState;
 
 /// Result of a text injection attempt.
 ///
@@ -112,6 +113,22 @@ pub fn prompt_accessibility_if_needed() {
     }
 }
 
+/// Check if Accessibility permission is currently granted.
+///
+/// On macOS, calls `AXIsProcessTrusted()` without the prompt flag.
+/// Returns `true` if permission is granted or on non-macOS platforms.
+pub fn is_accessibility_granted() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_accessibility_granted()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Get the name of the currently focused application.
 ///
 /// Returns the executable/application name (not the window title):
@@ -144,6 +161,60 @@ pub fn get_focused_app_name() -> String {
 /// via the OS keyboard API. Returns an error for unrecognized commands.
 pub fn execute_command(command: &VoiceCommand) -> anyhow::Result<()> {
     commands::execute_command(command)
+}
+
+/// Retry text injection by polling for a focused text-accepting window.
+///
+/// After an `InjectionResult::Blocked`, this task polls every 500ms to check
+/// if a text-accepting window has gained focus. On success, broadcasts
+/// `PipelineState::Listening`. Cancels after 30 seconds or when `cancel_rx`
+/// is signalled (new dictation start or user copy).
+pub async fn retry_on_focus(
+    text: String,
+    state_tx: tokio::sync::broadcast::Sender<PipelineState>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let timeout = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(timeout);
+
+    let mut interval = tokio::time::interval(Duration::from_millis(500));
+    // First tick completes immediately — skip it so first retry is at 500ms
+    interval.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => {
+                tracing::info!("Injection focus retry timed out after 30s");
+                return;
+            }
+            result = cancel_rx.changed() => {
+                match result {
+                    Ok(()) if *cancel_rx.borrow() => {
+                        tracing::info!("Injection focus retry cancelled");
+                        return;
+                    }
+                    Err(_) => {
+                        // Sender dropped — session ended
+                        return;
+                    }
+                    _ => continue,
+                }
+            }
+            _ = interval.tick() => {
+                let result = inject_text(&text);
+                match result {
+                    InjectionResult::Success => {
+                        let _ = state_tx.send(PipelineState::Listening);
+                        tracing::info!("Injection focus retry succeeded");
+                        return;
+                    }
+                    InjectionResult::Blocked { .. } => {
+                        // Still no focus — continue polling
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v4 installer source for Vox.
+
+  Installs vox.exe to Program Files\Vox\ with a Start Menu shortcut
+  and Add/Remove Programs entry. Does NOT bundle models — they are
+  auto-downloaded on first launch (Constitution Principle V).
+
+  Build: see ../build-msi.ps1
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Vox"
+    Manufacturer="Vox Project"
+    Version="!(bind.FileVersion.VoxExe)"
+    UpgradeCode="A1E7C3D0-5B2F-4F8A-9C1D-3E6F7A8B9C0D"
+    Scope="perMachine">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Vox is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Add/Remove Programs icon -->
+    <Icon Id="VoxIcon" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="VoxIcon" />
+
+    <!-- Install directory: Program Files\Vox -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Vox">
+        <Component Id="VoxExecutable" Guid="B2F8D4E1-6C3A-4D9B-AE2F-4A7B8C9D0E1F">
+          <File Id="VoxExe" Source="$(var.BinaryPath)" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start Menu shortcut -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="VoxMenuFolder" Name="Vox">
+        <Component Id="StartMenuShortcut" Guid="C3A9E5F2-7D4B-5E0C-BF3A-5B8C9D0E1F2A">
+          <Shortcut
+            Id="VoxShortcut"
+            Name="Vox"
+            Description="Intelligent voice dictation"
+            Target="[INSTALLFOLDER]vox.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="VoxIcon" />
+          <RemoveFolder Id="RemoveVoxMenuFolder" On="uninstall" />
+          <RegistryValue
+            Root="HKCU"
+            Key="Software\Vox"
+            Name="installed"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Vox" Level="1">
+      <ComponentRef Id="VoxExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

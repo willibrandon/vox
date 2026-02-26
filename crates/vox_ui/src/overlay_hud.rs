@@ -18,7 +18,7 @@ use gpui::{
     WindowBounds, WindowControlArea, WindowHandle, WindowKind, WindowOptions,
 };
 
-use crate::key_bindings::{OpenModelFolder, RetryDownload};
+use crate::key_bindings::{CancelInjectionRetry, OpenModelFolder, RetryDownload};
 use crate::layout::{radius, size as layout_size, spacing};
 use crate::theme::{ThemeColors, VoxTheme};
 use crate::waveform::WaveformVisualizer;
@@ -192,6 +192,7 @@ impl OverlayHud {
             let _ = this.update(cx, |this, cx| {
                 this.showing_injected_fade = false;
                 this.pipeline_state = PipelineState::Idle;
+                cx.dispatch_action(&CancelInjectionRetry);
                 cx.global::<VoxState>()
                     .set_pipeline_state(PipelineState::Idle);
                 let readiness = cx.global::<VoxState>().readiness();
@@ -231,6 +232,9 @@ impl OverlayHud {
     /// Copies polished text to clipboard and transitions to Idle (injection failure recovery).
     fn copy_to_clipboard(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        // Cancel the pipeline's background focus-retry task so it doesn't
+        // inject stale text after the user has already copied it.
+        cx.dispatch_action(&CancelInjectionRetry);
         self.pipeline_state = PipelineState::Idle;
         cx.global::<VoxState>()
             .set_pipeline_state(PipelineState::Idle);
@@ -437,60 +441,127 @@ impl OverlayHud {
             .child(SharedString::from(truncate_text(polished_text, 60)))
     }
 
-    /// Renders injection failure: polished text + Copy button.
+    /// Renders injection failure: error reason, polished text, and Copy button.
     fn render_injection_failed(
         &self,
         polished_text: &str,
-        _error: &str,
+        error: &str,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.global::<VoxTheme>();
         let text_to_copy = polished_text.to_string();
+        let error_label = humanize_injection_error(error);
         div()
             .flex()
-            .flex_row()
-            .items_center()
+            .flex_col()
             .flex_grow()
+            .justify_center()
             .px(spacing::MD)
-            .gap(spacing::SM)
+            .gap(spacing::XS)
             .child(
                 div()
-                    .flex_grow()
-                    .overflow_hidden()
                     .text_xs()
-                    .text_color(theme.colors.text)
-                    .child(SharedString::from(truncate_text(polished_text, 40))),
+                    .text_color(theme.colors.status_injection_failed)
+                    .child(SharedString::from(error_label)),
             )
             .child(
                 div()
-                    .id("copy-injected-text")
-                    .px(spacing::SM)
-                    .py(spacing::XS)
-                    .rounded(radius::SM)
-                    .bg(theme.colors.button_primary_bg)
-                    .text_xs()
-                    .text_color(theme.colors.button_primary_text)
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.copy_to_clipboard(&text_to_copy, cx);
-                    }))
-                    .child("Copy"),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(spacing::SM)
+                    .child(
+                        div()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .text_xs()
+                            .text_color(theme.colors.text)
+                            .child(SharedString::from(truncate_text(polished_text, 40))),
+                    )
+                    .child(
+                        div()
+                            .id("copy-injected-text")
+                            .px(spacing::SM)
+                            .py(spacing::XS)
+                            .rounded(radius::SM)
+                            .bg(theme.colors.button_primary_bg)
+                            .text_xs()
+                            .text_color(theme.colors.button_primary_text)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.copy_to_clipboard(&text_to_copy, cx);
+                            }))
+                            .child("Copy"),
+                    ),
             )
     }
 
-    /// Renders error state: error message.
+    /// Renders error state with contextual guidance for GPU and generic errors.
+    ///
+    /// Detects GPU-specific error messages (OOM, crash) by substring matching
+    /// against `VoxError::Display` output and shows actionable user guidance.
     fn render_error(&self, message: &str, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = cx.global::<VoxTheme>();
-        div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .flex_grow()
-            .px(spacing::MD)
-            .overflow_hidden()
-            .text_xs()
-            .text_color(theme.colors.status_error)
-            .child(SharedString::from(truncate_text(message, 60)))
+        let lower = message.to_lowercase();
+
+        let guidance = if lower.contains("accessibility permission") {
+            Some("System Settings > Privacy & Security > Accessibility")
+        } else if lower.contains("input monitoring") {
+            Some("System Settings > Privacy & Security > Input Monitoring")
+        } else if lower.contains("no microphone") || lower.contains("audio device") {
+            Some("Connect a microphone to continue")
+        } else if lower.contains("no compatible gpu") {
+            if cfg!(target_os = "windows") {
+                Some("Install NVIDIA drivers from nvidia.com/drivers")
+            } else {
+                Some("Vox requires Apple Silicon (M1 or later)")
+            }
+        } else if lower.contains("gpu memory") || lower.contains("out of memory") {
+            Some("Close other GPU apps and restart Vox")
+        } else if lower.contains("gpu crash")
+            || lower.contains("gpu error")
+            || lower.contains("device lost")
+        {
+            Some("Restart Vox. If persistent, update GPU drivers.")
+        } else {
+            None
+        };
+
+        if let Some(guidance_text) = guidance {
+            div()
+                .flex()
+                .flex_col()
+                .flex_grow()
+                .justify_center()
+                .px(spacing::MD)
+                .gap(spacing::XS)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.status_error)
+                        .overflow_hidden()
+                        .child(SharedString::from(truncate_text(message, 50))),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.text_muted)
+                        .child(guidance_text),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_grow()
+                .px(spacing::MD)
+                .overflow_hidden()
+                .text_xs()
+                .text_color(theme.colors.status_error)
+                .child(SharedString::from(truncate_text(message, 60)))
+                .into_any_element()
+        }
     }
 
     /// Renders download progress: model name, percentage, progress bar.
@@ -547,12 +618,16 @@ impl OverlayHud {
             )
     }
 
-    /// Renders download failure: error message, Retry and Open Folder buttons.
+    /// Renders download failure: error, manual download URL, Retry and Open Folder buttons.
+    ///
+    /// Shows the direct download URL so users can manually download the model
+    /// when the network is unavailable (FR-024 offline fallback). The app polls
+    /// for manually-placed files in the background.
     fn render_download_failed(
         &self,
         model_name: &str,
         error: &str,
-        _manual_url: &str,
+        manual_url: &str,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.global::<VoxTheme>();
@@ -572,6 +647,13 @@ impl OverlayHud {
                         &format!("{model_name}: {error}"),
                         50,
                     ))),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.text_muted)
+                    .overflow_hidden()
+                    .child(SharedString::from(truncate_text(manual_url, 50))),
             )
             .child(
                 div()
@@ -783,6 +865,8 @@ pub fn open_overlay_window(cx: &mut App) -> anyhow::Result<WindowHandle<OverlayH
         // stay above all other windows (including other applications).
         #[cfg(target_os = "windows")]
         set_window_topmost(window);
+        #[cfg(target_os = "windows")]
+        disable_window_resize(window);
 
         window.on_window_should_close(cx, |_window, cx| {
             cx.defer(|cx| cx.quit());
@@ -841,6 +925,71 @@ fn set_window_topmost(window: &Window) {
     }
 }
 
+/// Subclasses the window procedure to block resize via `WM_NCHITTEST` remapping.
+///
+/// GPUI's custom hit-test handler returns resize codes (`HTTOP`, `HTLEFT`, etc.)
+/// for window edges even when `is_resizable: false`. This is because GPUI handles
+/// `WM_NCHITTEST` internally for custom-titlebar dragging and unconditionally
+/// returns resize codes for edge areas. Subclassing intercepts the message and
+/// remaps any resize code to `HTCLIENT`, preventing resize while preserving drag.
+#[cfg(target_os = "windows")]
+fn disable_window_resize(window: &Window) {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use raw_window_handle::HasWindowHandle;
+
+    /// Stores the original GPUI window procedure pointer.
+    static ORIGINAL_WNDPROC: AtomicIsize = AtomicIsize::new(0);
+
+    /// Replacement window procedure that intercepts `WM_NCHITTEST` and remaps
+    /// resize edge codes to `HTCLIENT`.
+    unsafe extern "system" fn no_resize_proc(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
+        const WM_NCHITTEST: u32 = 0x0084;
+        const HTCLIENT: isize = 1;
+
+        let original = ORIGINAL_WNDPROC.load(Ordering::Relaxed);
+        let result = unsafe { win32_call_window_proc(original, hwnd, msg, wparam, lparam) };
+
+        if msg == WM_NCHITTEST {
+            // HTLEFT=10 through HTBOTTOMRIGHT=17 are all resize codes.
+            // Remap them to HTCLIENT so Windows treats the edge as inert.
+            if (10..=17).contains(&result) {
+                return HTCLIENT;
+            }
+        }
+
+        result
+    }
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        tracing::warn!("failed to get native window handle for resize disable");
+        return;
+    };
+
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        tracing::warn!("unexpected non-Win32 window handle");
+        return;
+    };
+
+    let hwnd = win32.hwnd.get() as isize;
+    const GWLP_WNDPROC: i32 = -4;
+
+    let original = unsafe {
+        win32_set_window_long_ptr(hwnd, GWLP_WNDPROC, no_resize_proc as isize)
+    };
+
+    if original == 0 {
+        tracing::warn!("SetWindowLongPtrW(GWLP_WNDPROC) failed");
+    } else {
+        ORIGINAL_WNDPROC.store(original, Ordering::Relaxed);
+        tracing::info!("overlay window resize disabled via WM_NCHITTEST subclass");
+    }
+}
+
 /// Shows or hides the overlay window using Win32 `ShowWindow`.
 ///
 /// `SW_HIDE` makes the window invisible at the OS level (no click
@@ -886,6 +1035,18 @@ unsafe extern "system" {
 
     #[link_name = "ShowWindow"]
     fn win32_show_window(hwnd: isize, cmd_show: i32) -> i32;
+
+    #[link_name = "SetWindowLongPtrW"]
+    fn win32_set_window_long_ptr(hwnd: isize, index: i32, new_long: isize) -> isize;
+
+    #[link_name = "CallWindowProcW"]
+    fn win32_call_window_proc(
+        prev_wnd_func: isize,
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize;
 }
 
 /// Map readiness and pipeline state to display label, indicator color, and pulse flag.
@@ -933,6 +1094,23 @@ fn progress_fraction(progress: &DownloadProgress) -> f32 {
         }
         DownloadProgress::Complete => 1.0,
         DownloadProgress::Failed { .. } => 0.0,
+    }
+}
+
+/// Convert injection error debug strings into user-friendly labels.
+///
+/// The `error` field in `PipelineState::InjectionFailed` contains the
+/// `Debug` output of `InjectionError`, e.g., `"NoFocusedWindow"`. This
+/// converts those to readable messages for the overlay.
+fn humanize_injection_error(error: &str) -> String {
+    if error.contains("NoFocusedWindow") {
+        "No focused window".to_string()
+    } else if error.contains("ElevatedTarget") {
+        "Cannot type into elevated app".to_string()
+    } else if error.contains("PlatformError") {
+        "System input error".to_string()
+    } else {
+        truncate_text(error, 40)
     }
 }
 
@@ -1092,6 +1270,27 @@ mod tests {
         assert_eq!(truncate_text("hello world", 5), "hello...");
         assert_eq!(truncate_text("", 5), "");
         assert_eq!(truncate_text("exact", 5), "exact");
+    }
+
+    #[test]
+    fn test_humanize_injection_error() {
+        assert_eq!(
+            humanize_injection_error("NoFocusedWindow"),
+            "No focused window"
+        );
+        assert_eq!(
+            humanize_injection_error("ElevatedTarget"),
+            "Cannot type into elevated app"
+        );
+        assert_eq!(
+            humanize_injection_error("PlatformError(\"SendInput failed\")"),
+            "System input error"
+        );
+        // Unknown errors get truncated
+        let long_error = "a".repeat(60);
+        let humanized = humanize_injection_error(&long_error);
+        assert!(humanized.ends_with("..."));
+        assert!(humanized.len() <= 43); // 40 chars + "..."
     }
 
     fn test_colors() -> ThemeColors {

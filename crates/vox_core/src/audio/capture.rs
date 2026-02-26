@@ -266,6 +266,50 @@ impl AudioCapture {
         self.error_flag.load(Ordering::Acquire)
     }
 
+    /// Check if the audio device is healthy and the stream is valid.
+    ///
+    /// Returns `true` if no error has been flagged (device connected,
+    /// stream not invalidated). This is a non-blocking, lock-free check.
+    pub fn health_check(&self) -> bool {
+        !self.error_flag.load(Ordering::Acquire)
+    }
+
+    /// Returns a shared handle to the error flag for cross-thread monitoring.
+    ///
+    /// The orchestrator can poll this flag to detect device disconnection
+    /// without holding a reference to AudioCapture (which is NOT Send).
+    pub fn error_flag(&self) -> Arc<AtomicBool> {
+        self.error_flag.clone()
+    }
+
+    /// Switch to the system's default audio input device.
+    ///
+    /// Convenience wrapper around `switch_device(None)`. Used by the
+    /// audio recovery handler after device disconnection.
+    pub fn switch_to_default(&mut self) -> Result<()> {
+        self.switch_device(None)
+    }
+
+    /// Attempt to reconnect to a specific device, falling back to default.
+    ///
+    /// Tries the named device first. If that fails (device not found or
+    /// unavailable), falls back to the system default device.
+    pub fn reconnect(&mut self, device_name: Option<&str>) -> Result<()> {
+        if let Some(name) = device_name {
+            match self.switch_device(Some(name)) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    tracing::warn!(
+                        device = name,
+                        error = %err,
+                        "failed to reconnect to named device, falling back to default"
+                    );
+                }
+            }
+        }
+        self.switch_to_default()
+    }
+
     /// Stop the current stream, switch to a different input device, and
     /// restart capture.
     ///
@@ -389,6 +433,35 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+    }
+
+    #[test]
+    fn test_audio_recovery_default_device() {
+        let config = AudioConfig::default();
+        let mut capture = AudioCapture::new(&config).expect("create capture");
+        capture.start().expect("start capture");
+
+        // Health check should pass on a healthy device
+        assert!(capture.health_check(), "healthy device should pass health check");
+
+        // Switch to default should succeed (already on default)
+        capture.switch_to_default().expect("switch_to_default failed");
+        assert!(capture.health_check(), "should be healthy after switch_to_default");
+
+        // Reconnect with None should also succeed
+        capture.reconnect(None).expect("reconnect(None) failed");
+        assert!(capture.health_check(), "should be healthy after reconnect(None)");
+
+        // Reconnect with a bogus device name should fall back to default
+        capture
+            .reconnect(Some("NonexistentDevice12345"))
+            .expect("reconnect with fallback should succeed");
+        assert!(
+            capture.health_check(),
+            "should be healthy after reconnect fallback to default"
+        );
+
+        capture.stop();
     }
 
     #[test]

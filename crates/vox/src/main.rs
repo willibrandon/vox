@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 //! Vox application entry point.
 //!
 //! Creates the GPUI [`Application`], initializes structured logging, sets up
@@ -11,7 +13,7 @@
 mod tray;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -30,8 +32,8 @@ use vox_core::pipeline::{Pipeline, PipelineCommand, PipelineState};
 use vox_core::state::{ensure_data_dirs, AppReadiness, VoxState};
 use vox_core::vad::VadConfig;
 use vox_ui::key_bindings::{
-    register_actions, register_key_bindings, StopRecording, ToggleOverlay,
-    ToggleRecording,
+    register_actions, register_key_bindings, CancelInjectionRetry, StopRecording,
+    ToggleOverlay, ToggleRecording,
 };
 use vox_ui::overlay_hud::{open_overlay_window, OverlayDisplayState};
 use vox_ui::workspace::open_settings_window;
@@ -163,6 +165,14 @@ fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyho
     // already trusted or on non-macOS platforms.
     vox_core::injector::prompt_accessibility_if_needed();
 
+    // macOS permission polling (US8): if Accessibility permission isn't granted
+    // yet, poll every 2 seconds and auto-proceed when the user grants it.
+    // Shows guidance in the overlay while waiting.
+    spawn_accessibility_poller(cx);
+
+    // Start system sleep/wake listener and recovery handler (US3).
+    spawn_wake_handler(cx);
+
     // Pipeline initialization runs in background; UI is already visible
     cx.spawn(async move |mut cx| {
         initialize_pipeline(&mut cx).await;
@@ -203,6 +213,15 @@ fn register_pipeline_actions(cx: &mut App) {
         let is_recording = cx.global::<RecordingSession>().active.lock().is_some();
         if is_recording {
             stop_recording(cx);
+        }
+    });
+
+    cx.on_action(|_: &CancelInjectionRetry, cx| {
+        let guard = cx.global::<RecordingSession>().active.lock();
+        if let Some(active) = guard.as_ref() {
+            let _ = active
+                .command_tx
+                .try_send(PipelineCommand::CancelInjectionRetry);
         }
     });
 }
@@ -470,12 +489,23 @@ fn setup_global_hotkey(cx: &mut App) {
         }
     };
 
-    if let Err(err) = manager.register(hotkey) {
-        tracing::warn!(?err, hotkey = %hotkey_str, "failed to register global hotkey");
-        return;
-    }
-
-    tracing::info!(hotkey = %hotkey_str, "global hotkey registered");
+    let hotkey_registered = match manager.register(hotkey) {
+        Ok(()) => {
+            tracing::info!(hotkey = %hotkey_str, "global hotkey registered");
+            true
+        }
+        Err(err) => {
+            tracing::warn!(?err, hotkey = %hotkey_str, "failed to register global hotkey — will retry in event loop");
+            // macOS Input Monitoring permission may not be granted yet.
+            if cfg!(target_os = "macos") {
+                cx.global::<VoxState>().set_pipeline_state(PipelineState::Error {
+                    message: "Input Monitoring permission required — System Settings > Privacy & Security > Input Monitoring".to_string(),
+                });
+                update_overlay_state(cx);
+            }
+            false
+        }
+    };
 
     let initial_mode = cx.global::<VoxState>().settings().activation_mode;
     let (rebind_tx, rebind_rx) = std::sync::mpsc::channel::<String>();
@@ -490,9 +520,34 @@ fn setup_global_hotkey(cx: &mut App) {
         let mut current_hotkey = hotkey;
         let mut hotkey_id = current_hotkey.id();
         let mut interpreter = HotkeyInterpreter::new(initial_mode);
+        let mut hotkey_registered = hotkey_registered;
+        let mut retry_timer = Instant::now();
 
         loop {
             executor.timer(Duration::from_millis(5)).await;
+
+            // Retry hotkey registration every 2 seconds if initial registration failed.
+            // Handles macOS Input Monitoring permission being granted after startup.
+            if !hotkey_registered && retry_timer.elapsed() >= Duration::from_secs(2) {
+                retry_timer = Instant::now();
+                match manager.register(current_hotkey) {
+                    Ok(()) => {
+                        tracing::info!("global hotkey registered after permission grant");
+                        hotkey_registered = true;
+                        hotkey_id = current_hotkey.id();
+                        cx.update(|cx| {
+                            let current = cx.global::<VoxState>().pipeline_state();
+                            if let PipelineState::Error { ref message } = current {
+                                if message.contains("Input Monitoring") {
+                                    cx.global::<VoxState>().set_pipeline_state(PipelineState::Idle);
+                                    update_overlay_state(cx);
+                                }
+                            }
+                        });
+                    }
+                    Err(_) => {}
+                }
+            }
 
             // Check for hotkey rebind requests from the settings panel
             while let Ok(new_hotkey_str) = rebind_rx.try_recv() {
@@ -679,8 +734,7 @@ fn setup_system_tray(cx: &mut App) {
                         cx.dispatch_action(&ToggleOverlay);
                     });
                 } else if event.id == menu_ids.about {
-                    tracing::info!("About Vox selected");
-                    // About dialog is a future feature — log for now
+                    show_about_dialog();
                 } else if event.id == menu_ids.quit {
                     // Use _exit() to skip atexit handlers that trigger Metal
                     // residency set assertions in llama.cpp's ggml-metal cleanup.
@@ -690,6 +744,198 @@ fn setup_system_tray(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Spawn the system sleep/wake listener and recovery handler.
+///
+/// Starts the platform-specific power event listener (Windows: `WM_POWERBROADCAST`,
+/// macOS: `IORegisterForSystemPower`) and polls for wake events on the GPUI
+/// foreground thread. On wake:
+/// 1. Stops any active recording session (the cpal audio stream is invalidated
+///    by sleep — the OS tears down audio device handles).
+/// 2. Probes the audio device to verify it's accessible.
+/// 3. Resets pipeline state to Idle.
+///
+/// The global hotkey registration persists across sleep/wake (OS message-based).
+/// GPU contexts (CUDA/Metal) survive sleep on modern drivers — the existing
+/// `retry_once()` mechanism handles any transient GPU failures on the first
+/// post-wake transcription.
+fn spawn_wake_handler(cx: &mut App) {
+    let mut wake_rx = vox_core::power::start_wake_listener();
+    let executor = cx.background_executor().clone();
+
+    cx.spawn(async move |cx| {
+        loop {
+            executor.timer(Duration::from_millis(500)).await;
+
+            while let Ok(event) = wake_rx.try_recv() {
+                tracing::info!(
+                    elapsed_ms = event.timestamp.elapsed().as_millis() as u64,
+                    "system wake detected — starting recovery sequence"
+                );
+
+                cx.update(|cx| {
+                    // 1. Stop any active recording — audio stream is dead after sleep
+                    let had_active = cx
+                        .global::<RecordingSession>()
+                        .active
+                        .lock()
+                        .take()
+                        .is_some();
+
+                    if had_active {
+                        tracing::info!("stopped active recording session after wake");
+                    }
+
+                    // 2. Reset pipeline state to Idle
+                    cx.global::<VoxState>()
+                        .set_pipeline_state(PipelineState::Idle);
+                    update_overlay_state(cx);
+
+                    // 3. Probe audio device — create a temporary AudioCapture to
+                    // verify the OS audio subsystem is functional after wake.
+                    // If it fails, show guidance; the user can retry via hotkey
+                    // once the device is available.
+                    let audio_config = AudioConfig {
+                        device_name: cx.global::<VoxState>().settings().input_device.clone(),
+                        ..AudioConfig::default()
+                    };
+                    match AudioCapture::new(&audio_config) {
+                        Ok(_probe) => {
+                            tracing::info!("audio device verified after wake");
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "audio device not available after wake"
+                            );
+                            cx.global::<VoxState>().set_pipeline_state(
+                                PipelineState::Error {
+                                    message: "No microphone detected after wake — connect a device and press the hotkey".to_string(),
+                                },
+                            );
+                            update_overlay_state(cx);
+                        }
+                    }
+
+                    tracing::info!(
+                        elapsed_ms = event.timestamp.elapsed().as_millis() as u64,
+                        "wake recovery sequence complete"
+                    );
+                });
+            }
+        }
+    })
+    .detach();
+}
+
+/// Poll for macOS Accessibility permission and update the overlay.
+///
+/// If Accessibility isn't granted after the initial prompt, shows guidance
+/// in the overlay and polls every 2 seconds. Auto-dismisses the guidance
+/// and proceeds when the user grants permission. No-op on non-macOS
+/// platforms or if permission is already granted.
+fn spawn_accessibility_poller(cx: &mut App) {
+    if vox_core::injector::is_accessibility_granted() {
+        return;
+    }
+
+    tracing::info!("Accessibility permission not yet granted — starting poll loop");
+
+    // Show guidance only if no other error is already displayed.
+    // `setup_global_hotkey()` runs before this function and may have set
+    // an Input Monitoring error — overwriting it would hide that guidance.
+    let current = cx.global::<VoxState>().pipeline_state();
+    if !matches!(current, PipelineState::Error { .. }) {
+        cx.global::<VoxState>().set_pipeline_state(PipelineState::Error {
+            message: "Accessibility permission required — System Settings > Privacy & Security > Accessibility".to_string(),
+        });
+        update_overlay_state(cx);
+    }
+
+    let executor = cx.background_executor().clone();
+
+    cx.spawn(async move |cx| {
+        loop {
+            executor.timer(Duration::from_secs(2)).await;
+
+            if vox_core::injector::is_accessibility_granted() {
+                tracing::info!("Accessibility permission granted — resuming");
+                cx.update(|cx| {
+                    // Only clear if the current error is specifically our
+                    // Accessibility message. If the displayed error is something
+                    // else (e.g., Input Monitoring), leave it — that error's own
+                    // handler will clear it when resolved.
+                    let current = cx.global::<VoxState>().pipeline_state();
+                    if let PipelineState::Error { ref message } = current {
+                        if message.contains("Accessibility permission") {
+                            cx.global::<VoxState>().set_pipeline_state(PipelineState::Idle);
+                            update_overlay_state(cx);
+                        }
+                    }
+                });
+                return;
+            }
+        }
+    })
+    .detach();
+}
+
+/// Show a native About dialog with version and project info.
+///
+/// Uses Win32 `MessageBoxW` on Windows and `osascript` on macOS.
+fn show_about_dialog() {
+    let text = format!(
+        "Vox v{}\n\n\
+         Local-first intelligent voice dictation.\n\
+         All processing happens on-device.\n\n\
+         https://github.com/willibrandon/vox",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        // Spawn on a background thread so the modal MessageBoxW
+        // doesn't block the tray event loop.
+        std::thread::spawn(move || {
+            let title: Vec<u16> = "About Vox\0".encode_utf16().collect();
+            let body: Vec<u16> = format!("{text}\0").encode_utf16().collect();
+            const MB_OK: u32 = 0x0000_0000;
+            const MB_ICONINFORMATION: u32 = 0x0000_0040;
+            unsafe {
+                win32_message_box(
+                    std::ptr::null(),
+                    body.as_ptr(),
+                    title.as_ptr(),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // AppleScript via osascript — simple, no ObjC FFI needed.
+        let script = format!(
+            "display dialog \"{}\" with title \"About Vox\" buttons {{\"OK\"}} default button \"OK\" with icon note",
+            text.replace('\"', "\\\"").replace('\n', "\\n")
+        );
+        let _ = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .spawn();
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+unsafe extern "system" {
+    #[link_name = "MessageBoxW"]
+    fn win32_message_box(
+        hwnd: *const (),
+        text: *const u16,
+        caption: *const u16,
+        msg_type: u32,
+    ) -> i32;
 }
 
 async fn initialize_pipeline(cx: &mut AsyncApp) {
@@ -710,6 +956,36 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx.global::<VoxState>().tokio_runtime().handle().clone()
     });
 
+    // GPU detection (US7): detect hardware before model loading so we can
+    // show actionable guidance if no compatible GPU is found.
+    match vox_core::gpu::detect_gpu() {
+        Some(gpu_info) => {
+            tracing::info!(
+                gpu = %gpu_info,
+                "GPU detected"
+            );
+            cx.update(|cx| {
+                cx.global::<VoxState>().set_gpu_info(gpu_info);
+            });
+        }
+        None => {
+            let message = if cfg!(target_os = "windows") {
+                "No compatible GPU detected. Vox requires an NVIDIA GPU with CUDA support. \
+                 Install the latest NVIDIA drivers from nvidia.com/drivers"
+            } else {
+                "No compatible GPU detected. Vox requires Apple Silicon (M1 or later) with Metal."
+            };
+            tracing::error!(message, "GPU detection failed");
+            cx.update(|cx| {
+                cx.global::<VoxState>().set_readiness(AppReadiness::Error {
+                    message: message.to_string(),
+                });
+                update_overlay_state(cx);
+            });
+            anyhow::bail!(message);
+        }
+    }
+
     let missing = check_missing_models()?;
 
     if !missing.is_empty() {
@@ -726,21 +1002,92 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
         });
 
         let downloader = ModelDownloader::new();
-        tokio_handle
+        let download_result = tokio_handle
             .spawn(async move { downloader.download_missing(&missing).await })
-            .await??;
+            .await?;
+
+        if let Err(download_err) = download_result {
+            // Offline fallback (FR-024): show manual download URLs and poll
+            // for files to appear on disk. The user can download the models
+            // manually and place them in the model directory.
+            let err_msg = download_err.to_string();
+            tracing::warn!(
+                error = %err_msg,
+                "model download failed, starting offline fallback (FR-024)"
+            );
+
+            let still_missing = check_missing_models()?;
+            if !still_missing.is_empty() {
+                let missing_filenames: Vec<&str> =
+                    still_missing.iter().map(|m| m.filename).collect();
+
+                let err_for_ui = err_msg.clone();
+                cx.update(|cx| {
+                    let progress = |idx: usize| -> DownloadProgress {
+                        if missing_filenames.contains(&models::MODELS[idx].filename) {
+                            DownloadProgress::Failed {
+                                error: err_for_ui.clone(),
+                                manual_url: models::MODELS[idx].url.to_string(),
+                            }
+                        } else {
+                            DownloadProgress::Complete
+                        }
+                    };
+
+                    cx.global::<VoxState>()
+                        .set_readiness(AppReadiness::Downloading {
+                            vad_progress: progress(0),
+                            whisper_progress: progress(1),
+                            llm_progress: progress(2),
+                        });
+                    update_overlay_state(cx);
+                });
+
+                // Poll every 5 seconds for manually-placed model files.
+                // Blocks until all required models are detected on disk.
+                let poller = ModelDownloader::new();
+                tokio_handle
+                    .spawn(async move { poller.poll_until_ready().await })
+                    .await??;
+
+                tracing::info!("all models detected on disk after offline fallback");
+            }
+        }
     }
 
     cx.update(|cx| {
         cx.global::<VoxState>()
             .set_readiness(AppReadiness::Loading {
-                stage: "Verifying models...".into(),
+                stage: "Verifying model integrity...".into(),
             });
         update_overlay_state(cx);
     });
 
-    if !models::all_models_present()? {
-        anyhow::bail!("not all models available after download");
+    // SHA-256 verification of all model files (US5). Corrupt files are deleted
+    // and flagged for re-download. This catches corruption that occurred while
+    // the app was closed (disk errors, partial writes, etc.).
+    let corrupt = models::verify_all_models()?;
+    if !corrupt.is_empty() {
+        let names: Vec<&str> = corrupt.iter().map(|m| m.name).collect();
+        tracing::warn!(?names, "model integrity check failed — re-downloading corrupt models");
+
+        cx.update(|cx| {
+            cx.global::<VoxState>()
+                .set_readiness(AppReadiness::Loading {
+                    stage: format!("Re-downloading {} corrupt model(s)...", corrupt.len()),
+                });
+            update_overlay_state(cx);
+        });
+
+        let downloader = ModelDownloader::new();
+        tokio_handle
+            .spawn(async move { downloader.download_missing(&corrupt).await })
+            .await??;
+
+        // Verify again after re-download
+        if !models::all_models_present()? {
+            anyhow::bail!("models still missing after integrity re-download");
+        }
     }
 
     // Mark all models as Downloaded now that they're verified on disk

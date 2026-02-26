@@ -20,6 +20,7 @@ use parking_lot::RwLock;
 use crate::asr::AsrEngine;
 use crate::config::Settings;
 use crate::dictionary::DictionaryCache;
+use crate::gpu::GpuInfo;
 use crate::llm::PostProcessor;
 use crate::log_sink::LogReceiver;
 use crate::models::{BenchmarkResult, DownloadProgress};
@@ -124,6 +125,8 @@ pub struct VoxState {
     /// Channel sender for hotkey re-registration at runtime. Set by the
     /// hotkey event loop; used by the settings panel's hotkey recorder.
     hotkey_rebind_tx: parking_lot::Mutex<Option<Sender<String>>>,
+    /// Detected GPU hardware information, queried once at startup.
+    gpu_info: RwLock<Option<GpuInfo>>,
 }
 
 impl gpui::Global for VoxState {}
@@ -177,6 +180,7 @@ impl VoxState {
             log_receiver: RwLock::new(None),
             last_latency_ms: RwLock::new(None),
             hotkey_rebind_tx: parking_lot::Mutex::new(None),
+            gpu_info: RwLock::new(None),
         })
     }
 
@@ -419,6 +423,20 @@ impl VoxState {
         if let Some(tx) = self.hotkey_rebind_tx.lock().as_ref() {
             let _ = tx.send(new_hotkey.to_string());
         }
+    }
+
+    // --- GPU info ---
+
+    /// Read the detected GPU information (set at startup).
+    pub fn gpu_info(&self) -> Option<GpuInfo> {
+        self.gpu_info.read().clone()
+    }
+
+    /// Store detected GPU hardware information.
+    ///
+    /// Called during startup after [`crate::gpu::detect_gpu`] completes.
+    pub fn set_gpu_info(&self, info: GpuInfo) {
+        *self.gpu_info.write() = Some(info);
     }
 
     /// Create a transcript writer for pipeline use.

@@ -60,4 +60,10 @@ pub enum PipelineState {
 pub enum PipelineCommand {
     /// Stop the pipeline after the current segment completes (FR-018).
     Stop,
+    /// Cancel an active injection focus-retry task without stopping the pipeline.
+    ///
+    /// Sent when the user clicks Copy on buffered text or the overlay
+    /// transitions to idle. Without this, the retry task would keep polling
+    /// and could inject stale text into a later-focused window.
+    CancelInjectionRetry,
 }

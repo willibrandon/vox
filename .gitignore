@@ -9,3 +9,5 @@
 .env
 *.log
 .DS_Store
+packaging/windows/output/
+packaging/macos/output/

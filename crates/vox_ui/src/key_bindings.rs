@@ -23,6 +23,7 @@ actions!(
         RetryDownload,
         OpenModelFolder,
         DismissOverlay,
+        CancelInjectionRetry,
     ]
 );
 
@@ -72,6 +73,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &DismissOverlay, _cx| {
         tracing::info!("DismissOverlay dispatched");
     });
+    cx.on_action(|_: &CancelInjectionRetry, _cx| {});
 }
 
 /// Register keyboard shortcuts mapped to actions.

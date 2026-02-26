@@ -7461,6 +7461,7 @@ dependencies = [
  "global-hotkey",
  "gpui",
  "hound",
+ "libc",
  "llama-cpp-2",
  "objc2 0.6.3",
  "objc2-core-graphics",

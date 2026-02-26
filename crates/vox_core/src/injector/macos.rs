@@ -138,6 +138,22 @@ pub(super) fn prompt_accessibility_if_needed() {
     }
 }
 
+/// Check if Accessibility permission is currently granted without prompting.
+///
+/// Returns `true` if the process is trusted, `false` otherwise. Unlike
+/// [`prompt_accessibility_if_needed`], this does NOT show a system dialog.
+/// Used for polling loops that auto-detect when the user grants permission.
+#[cfg(target_os = "macos")]
+pub(super) fn is_accessibility_granted() -> bool {
+    unsafe {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        AXIsProcessTrusted()
+    }
+}
+
 /// Check whether macOS Accessibility permission has been granted.
 ///
 /// Used as a preflight by both text injection and voice command execution.

@@ -12,3 +12,7 @@ pub mod hotkey_interpreter;
 pub mod state;
 pub mod logging;
 pub mod log_sink;
+pub mod error;
+pub mod recovery;
+pub mod gpu;
+pub mod power;

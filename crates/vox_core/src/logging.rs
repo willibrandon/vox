@@ -5,9 +5,13 @@
 //! of days. Log directory is platform-specific via [`log_dir`].
 
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -20,6 +24,96 @@ use crate::log_sink::{LogReceiver, LogSink};
 /// binding in `main()`.
 pub struct LoggingGuard {
     _guard: WorkerGuard,
+}
+
+/// Shared state for tracking cumulative bytes written and daily reset.
+struct SizeCappedState {
+    /// Total bytes written to the file since the last daily reset.
+    bytes_written: AtomicU64,
+    /// Maximum bytes allowed per day before silent discard.
+    max_bytes: u64,
+    /// Day-of-epoch when `bytes_written` was last reset.
+    current_date: AtomicU32,
+}
+
+/// A writer wrapper that enforces a per-day byte cap on log output.
+///
+/// Once `max_bytes` are written in a single calendar day, subsequent writes
+/// are silently discarded (the caller sees `Ok(buf.len())` so tracing never
+/// errors). The counter resets automatically at the start of each new day
+/// (aligned with `tracing-appender`'s daily rotation).
+///
+/// This prevents runaway logging from consuming unbounded disk space while
+/// preserving all events in the in-memory [`LogSink`] (UI log panel).
+#[derive(Clone)]
+pub struct SizeCappedWriter<W> {
+    inner: W,
+    state: Arc<SizeCappedState>,
+}
+
+impl<W> SizeCappedWriter<W> {
+    /// Create a new size-capped writer wrapping `inner` with the given byte limit.
+    pub fn new(inner: W, max_bytes: u64) -> Self {
+        Self {
+            inner,
+            state: Arc::new(SizeCappedState {
+                bytes_written: AtomicU64::new(0),
+                max_bytes,
+                current_date: AtomicU32::new(day_of_epoch()),
+            }),
+        }
+    }
+
+    /// Total bytes written since the last daily reset.
+    #[cfg(test)]
+    fn bytes_written(&self) -> u64 {
+        self.state.bytes_written.load(Ordering::Relaxed)
+    }
+}
+
+impl<W: Write> Write for SizeCappedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Daily reset: if the calendar day changed, reset the counter.
+        let today = day_of_epoch();
+        let stored = self.state.current_date.load(Ordering::Relaxed);
+        if today != stored {
+            self.state.current_date.store(today, Ordering::Relaxed);
+            self.state.bytes_written.store(0, Ordering::Relaxed);
+        }
+
+        let current = self.state.bytes_written.load(Ordering::Relaxed);
+        if current >= self.state.max_bytes {
+            return Ok(buf.len()); // Silently discard
+        }
+
+        let written = self.inner.write(buf)?;
+        self.state
+            .bytes_written
+            .fetch_add(written as u64, Ordering::Relaxed);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<'a, W: Write + Clone + 'static> MakeWriter<'a> for SizeCappedWriter<W> {
+    type Writer = SizeCappedWriter<W>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Current day number since Unix epoch (for daily counter reset).
+fn day_of_epoch() -> u32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86400) as u32
 }
 
 /// Initialize structured logging with daily file rotation and UI log capture.
@@ -36,6 +130,10 @@ pub fn init_logging() -> (LoggingGuard, LogReceiver) {
     let file_appender = tracing_appender::rolling::daily(&dir, "vox");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
+    // 10 MB daily cap — silently discards file writes past the limit.
+    // The in-memory LogSink (UI panel) is unaffected and receives all events.
+    let size_capped = SizeCappedWriter::new(non_blocking, 10 * 1024 * 1024);
+
     let filter = std::env::var("VOX_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .map(|val| EnvFilter::new(val))
@@ -44,7 +142,7 @@ pub fn init_logging() -> (LoggingGuard, LogReceiver) {
         });
 
     let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_writer(non_blocking);
+        .with_writer(size_capped);
 
     let (log_sink, log_receiver) = LogSink::new();
 
@@ -150,6 +248,63 @@ fn cutoff_date_string(days: u32) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs::File;
+    use std::sync::Mutex;
+
+    /// A shared in-memory buffer that implements Write + Clone for testing.
+    #[derive(Clone)]
+    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedBuf {
+        fn new() -> Self {
+            Self(Arc::new(Mutex::new(Vec::new())))
+        }
+
+        fn len(&self) -> usize {
+            self.0.lock().expect("lock").len()
+        }
+    }
+
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_log_size_cap() {
+        let buf = SharedBuf::new();
+        let cap = 1024; // 1 KB cap for test speed
+        let mut writer = SizeCappedWriter::new(buf.clone(), cap);
+
+        // Write 512 bytes — should succeed
+        let chunk = vec![b'A'; 512];
+        let written = writer.write(&chunk).expect("write");
+        assert_eq!(written, 512);
+        assert_eq!(buf.len(), 512);
+        assert_eq!(writer.bytes_written(), 512);
+
+        // Write another 512 bytes — should succeed (exactly at cap)
+        let written = writer.write(&chunk).expect("write");
+        assert_eq!(written, 512);
+        assert_eq!(buf.len(), 1024);
+
+        // Write another 512 bytes — should be silently discarded
+        let written = writer.write(&chunk).expect("write");
+        assert_eq!(written, 512, "should report success even when discarding");
+        assert_eq!(buf.len(), 1024, "buffer should not grow past cap");
+
+        // Write many more times — all silently discarded
+        for _ in 0..100 {
+            let written = writer.write(&chunk).expect("write");
+            assert_eq!(written, 512);
+        }
+        assert_eq!(buf.len(), 1024, "buffer should still be at cap after many writes");
+    }
 
     #[test]
     fn test_log_dir_platform() {
