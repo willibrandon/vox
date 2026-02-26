@@ -114,7 +114,7 @@ impl Render for HotkeyRecorder {
                         parts.push("Shift");
                     }
                     #[cfg(target_os = "macos")]
-                    if keystroke.modifiers.command {
+                    if keystroke.modifiers.platform {
                         parts.push("Cmd");
                     }
 

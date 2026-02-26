@@ -30,10 +30,11 @@ use vox_core::pipeline::{Pipeline, PipelineCommand, PipelineState};
 use vox_core::state::{ensure_data_dirs, AppReadiness, VoxState};
 use vox_core::vad::VadConfig;
 use vox_ui::key_bindings::{
-    register_actions, register_key_bindings, OpenSettings, StopRecording, ToggleOverlay,
+    register_actions, register_key_bindings, StopRecording, ToggleOverlay,
     ToggleRecording,
 };
 use vox_ui::overlay_hud::{open_overlay_window, OverlayDisplayState};
+use vox_ui::workspace::open_settings_window;
 use vox_ui::theme::VoxTheme;
 
 /// Holds the command channel sender for an active recording session.
@@ -89,8 +90,11 @@ impl gpui::Global for AppSubscriptions {}
 fn main() {
     let (_guard, log_receiver) = init_logging();
 
-    // Ctrl+C in the terminal should exit cleanly with code 0
-    ctrlc::set_handler(|| std::process::exit(0)).ok();
+    // Ctrl+C in the terminal: use _exit() to skip atexit handlers that trigger
+    // Metal residency set assertions in llama.cpp's ggml-metal cleanup.
+    // std::process::exit(0) runs atexit → ggml_metal_device_free → GGML_ASSERT
+    // because GPU resources are still in residency sets during forced teardown.
+    ctrlc::set_handler(|| unsafe { libc::_exit(0) }).ok();
 
     Application::new().run(move |cx: &mut App| {
         if let Err(err) = run_app(cx, log_receiver) {
@@ -153,6 +157,11 @@ fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyho
         }
     });
     cx.set_global(AppSubscriptions(vec![tray_sync]));
+
+    // Prompt for Accessibility permission on macOS if not already granted.
+    // Shows a system dialog directing the user to System Settings; no-op if
+    // already trusted or on non-macOS platforms.
+    vox_core::injector::prompt_accessibility_if_needed();
 
     // Pipeline initialization runs in background; UI is already visible
     cx.spawn(async move |mut cx| {
@@ -661,8 +670,8 @@ fn setup_system_tray(cx: &mut App) {
                     });
                 } else if event.id == menu_ids.settings {
                     cx.update(|cx| {
-                        tracing::info!("OpenSettings dispatched via tray menu");
-                        cx.dispatch_action(&OpenSettings);
+                        tracing::info!("OpenSettings via tray menu");
+                        open_settings_window(cx);
                     });
                 } else if event.id == menu_ids.toggle_overlay {
                     cx.update(|cx| {
@@ -673,7 +682,9 @@ fn setup_system_tray(cx: &mut App) {
                     tracing::info!("About Vox selected");
                     // About dialog is a future feature — log for now
                 } else if event.id == menu_ids.quit {
-                    cx.update(|cx| cx.quit());
+                    // Use _exit() to skip atexit handlers that trigger Metal
+                    // residency set assertions in llama.cpp's ggml-metal cleanup.
+                    cx.update(|_cx| unsafe { libc::_exit(0) });
                 }
             }
         }

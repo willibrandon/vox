@@ -87,19 +87,13 @@ impl SettingsPanel {
     pub fn new(_window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let state = cx.global::<VoxState>();
         let settings = state.settings().clone();
-        let input_devices = list_input_devices().unwrap_or_default();
         let panel_id = cx.entity_id();
 
         // --- Audio entities ---
-        let mut device_options = vec![SelectOption::new("", "Default")];
-        device_options.extend(input_devices.iter().map(|d| {
-            let label = if d.is_default {
-                format!("{} (default)", d.name)
-            } else {
-                d.name.clone()
-            };
-            SelectOption::new(d.name.clone(), label)
-        }));
+        // Start with just "Default" — device enumeration runs on a background
+        // thread because cpal's Core Audio calls on macOS can block for hundreds
+        // of milliseconds, which would freeze the main GPUI thread.
+        let device_options = vec![SelectOption::new("", "Default")];
         let selected_device = settings.input_device.clone().unwrap_or_default();
 
         let device_select = cx.new(|cx| {
@@ -423,6 +417,61 @@ impl SettingsPanel {
             )
             .with_content(settings.command_prefix.clone())
         });
+
+        // Enumerate audio devices on a background thread, then replace the
+        // device_select entity with one containing the full device list.
+        {
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let devices = executor
+                    .spawn(async { list_input_devices().unwrap_or_default() })
+                    .await;
+                if devices.is_empty() {
+                    return;
+                }
+                let _ = this.update(cx, |panel, cx| {
+                    let mut options = vec![SelectOption::new("", "Default")];
+                    options.extend(devices.iter().map(|d| {
+                        let label = if d.is_default {
+                            format!("{} (default)", d.name)
+                        } else {
+                            d.name.clone()
+                        };
+                        SelectOption::new(d.name.clone(), label)
+                    }));
+                    let selected =
+                        panel.settings.input_device.clone().unwrap_or_default();
+                    let panel_id = cx.entity_id();
+                    panel.device_select = cx.new(|cx| {
+                        Select::new(
+                            cx,
+                            options,
+                            selected,
+                            "Input Device",
+                            move |value, _window, cx| {
+                                let device = if value.is_empty() {
+                                    None
+                                } else {
+                                    Some(value.to_string())
+                                };
+                                if let Err(err) = cx
+                                    .global::<VoxState>()
+                                    .update_settings(|s| s.input_device = device)
+                                {
+                                    tracing::warn!(
+                                        %err,
+                                        "failed to save input device"
+                                    );
+                                }
+                                cx.notify(panel_id);
+                            },
+                        )
+                    });
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
 
         Self {
             settings,

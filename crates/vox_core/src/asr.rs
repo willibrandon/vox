@@ -137,19 +137,24 @@ mod tests {
             .join("ggml-large-v3-turbo-q5_0.bin")
     }
 
-    fn load_speech_samples() -> Vec<f32> {
+    fn load_wav(filename: &str) -> Vec<f32> {
         let wav_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
-            .join("speech_sample.wav");
-        let reader = hound::WavReader::open(wav_path).expect("failed to open speech_sample.wav");
+            .join(filename);
+        let reader =
+            hound::WavReader::open(&wav_path).unwrap_or_else(|err| panic!("failed to open {filename}: {err}"));
         let spec = reader.spec();
-        assert_eq!(spec.sample_rate, 16000, "expected 16 kHz WAV");
-        assert_eq!(spec.channels, 1, "expected mono WAV");
+        assert_eq!(spec.sample_rate, 16000, "expected 16 kHz WAV: {filename}");
+        assert_eq!(spec.channels, 1, "expected mono WAV: {filename}");
         reader
             .into_samples::<i16>()
             .map(|s| s.expect("failed to read WAV sample") as f32 / 32768.0)
             .collect()
+    }
+
+    fn load_speech_samples() -> Vec<f32> {
+        load_wav("speech_sample.wav")
     }
 
     #[test]
@@ -230,6 +235,21 @@ mod tests {
         assert_eq!(
             results[0], clone_text,
             "cloned engine should produce identical result"
+        );
+    }
+
+    #[test]
+    fn test_transcription_dear_march_poem() {
+        let engine = AsrEngine::new(&model_path(), true).expect("model should load");
+        let samples = load_wav("dear_march_poem.wav");
+        let text = engine
+            .transcribe(&samples)
+            .expect("transcription should succeed");
+        assert_eq!(
+            text,
+            "Dear March, come in. How glad I am. I hoped for you before. \
+             Put down your hat. You must have walked. How out of breath you are.",
+            "dear march poem transcription mismatch"
         );
     }
 }

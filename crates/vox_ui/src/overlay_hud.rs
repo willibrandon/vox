@@ -207,10 +207,10 @@ impl OverlayHud {
 
     /// Toggle the overlay's visibility. Uses OS-level window hiding on
     /// Windows; on macOS the transparent empty render is sufficient.
-    pub fn toggle_visibility(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+    pub fn toggle_visibility(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) {
         self.visible = !self.visible;
         #[cfg(target_os = "windows")]
-        set_window_visible(window, self.visible);
+        set_window_visible(_window, self.visible);
         cx.notify();
     }
 

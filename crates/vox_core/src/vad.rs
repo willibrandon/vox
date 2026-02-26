@@ -241,7 +241,11 @@ fn run_passthrough_loop(
     segment_tx: &tokio::sync::mpsc::Sender<Vec<f32>>,
     stop: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
-    let mut audio_buffer: Vec<f32> = Vec::with_capacity(16000 * 10); // ~10s pre-alloc
+    // Accumulate raw samples at the device's native sample rate. Resampling
+    // happens once on the complete buffer after recording stops — this avoids
+    // chunk-boundary artifacts that occur when the FFT resampler is fed small,
+    // variable-sized batches incrementally.
+    let mut raw_buffer: Vec<f32> = Vec::with_capacity(48000 * 10);
     let mut read_buffer = vec![0.0f32; 1024];
 
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -258,19 +262,7 @@ fn run_passthrough_loop(
             continue;
         }
 
-        let samples = if let Some(ref mut resampler) = resampler {
-            match resampler.process(&read_buffer[..read_count]) {
-                Ok(resampled) => resampled,
-                Err(error) => {
-                    tracing::warn!("Resample error, skipping batch: {error}");
-                    continue;
-                }
-            }
-        } else {
-            read_buffer[..read_count].to_vec()
-        };
-
-        audio_buffer.extend_from_slice(&samples);
+        raw_buffer.extend_from_slice(&read_buffer[..read_count]);
     }
 
     // Drain remaining audio from ring buffer after stop flag
@@ -286,32 +278,28 @@ fn run_passthrough_loop(
             break;
         }
 
-        let samples = if let Some(ref mut resampler) = resampler {
-            match resampler.process(&read_buffer[..read_count]) {
-                Ok(resampled) => resampled,
-                Err(error) => {
-                    tracing::warn!("Resample error during drain: {error}");
-                    break;
-                }
-            }
-        } else {
-            read_buffer[..read_count].to_vec()
-        };
-
-        audio_buffer.extend_from_slice(&samples);
+        raw_buffer.extend_from_slice(&read_buffer[..read_count]);
     }
 
-    if !audio_buffer.is_empty() {
-        let duration_ms = (audio_buffer.len() as f32 / 16000.0 * 1000.0) as u32;
-        tracing::info!(
-            samples = audio_buffer.len(),
-            duration_ms,
-            "passthrough: sending entire recording as one segment"
-        );
-        segment_tx.blocking_send(audio_buffer).ok();
-    } else {
+    if raw_buffer.is_empty() {
         tracing::debug!("passthrough: no audio captured, nothing to send");
+        return Ok(());
     }
+
+    // Resample the entire recording at once (native rate → 16 kHz)
+    let audio_buffer = if let Some(resampler) = resampler.as_mut() {
+        resampler.process(&raw_buffer)?
+    } else {
+        raw_buffer
+    };
+
+    let duration_ms = (audio_buffer.len() as f32 / 16000.0 * 1000.0) as u32;
+    tracing::info!(
+        samples = audio_buffer.len(),
+        duration_ms,
+        "passthrough: sending entire recording as one segment"
+    );
+    segment_tx.blocking_send(audio_buffer).ok();
 
     Ok(())
 }

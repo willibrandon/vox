@@ -96,6 +96,22 @@ pub fn inject_text(text: &str) -> InjectionResult {
     }
 }
 
+/// Prompt the user for Accessibility permission if not already granted.
+///
+/// On macOS, calls `AXIsProcessTrustedWithOptions` with the prompt flag,
+/// which shows a system dialog directing the user to System Settings >
+/// Privacy & Security > Accessibility. This is a no-op if permission is
+/// already granted, and a no-op on non-macOS platforms.
+///
+/// Should be called once at app startup so the user sees the prompt before
+/// their first dictation attempt.
+pub fn prompt_accessibility_if_needed() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::prompt_accessibility_if_needed();
+    }
+}
+
 /// Get the name of the currently focused application.
 ///
 /// Returns the executable/application name (not the window title):

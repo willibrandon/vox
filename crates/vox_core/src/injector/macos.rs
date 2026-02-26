@@ -74,6 +74,70 @@ pub(crate) fn chunk_utf16(text: &str) -> Vec<Vec<u16>> {
     chunks
 }
 
+/// Prompt the user for Accessibility permission if not already granted.
+///
+/// Calls `AXIsProcessTrustedWithOptions` with `kAXTrustedCheckOptionPrompt`
+/// set to `true`. If the process is not yet trusted, macOS shows a system
+/// dialog directing the user to System Settings > Privacy & Security >
+/// Accessibility. If already trusted, this is a no-op.
+#[cfg(target_os = "macos")]
+pub(super) fn prompt_accessibility_if_needed() {
+    unsafe {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+        }
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            fn CFDictionaryCreate(
+                allocator: *const std::ffi::c_void,
+                keys: *const *const std::ffi::c_void,
+                values: *const *const std::ffi::c_void,
+                num_values: isize,
+                key_callbacks: *const std::ffi::c_void,
+                value_callbacks: *const std::ffi::c_void,
+            ) -> *const std::ffi::c_void;
+            fn CFRelease(cf: *const std::ffi::c_void);
+
+            // kCFBooleanTrue is a global constant
+            static kCFBooleanTrue: *const std::ffi::c_void;
+        }
+
+        // kAXTrustedCheckOptionPrompt = "AXTrustedCheckOptionPrompt" as CFString.
+        // The C constant is a CFStringRef; we link it directly.
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            #[link_name = "kAXTrustedCheckOptionPrompt"]
+            static AX_TRUSTED_CHECK_OPTION_PROMPT: *const std::ffi::c_void;
+        }
+
+        let key = AX_TRUSTED_CHECK_OPTION_PROMPT;
+        let value = kCFBooleanTrue;
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            &key,
+            &value,
+            1,
+            std::ptr::null(), // default key callbacks
+            std::ptr::null(), // default value callbacks
+        );
+
+        let trusted = AXIsProcessTrustedWithOptions(options);
+        if !options.is_null() {
+            CFRelease(options);
+        }
+
+        if trusted {
+            tracing::info!("macOS Accessibility permission already granted");
+        } else {
+            tracing::warn!(
+                "macOS Accessibility permission not granted — system prompt shown"
+            );
+        }
+    }
+}
+
 /// Check whether macOS Accessibility permission has been granted.
 ///
 /// Used as a preflight by both text injection and voice command execution.
