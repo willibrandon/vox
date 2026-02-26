@@ -206,11 +206,12 @@ impl OverlayHud {
         }));
     }
 
-    /// Toggle the overlay's visibility. Uses OS-level window hiding on
-    /// Windows; on macOS the transparent empty render is sufficient.
+    /// Toggle the overlay's visibility using OS-level window hiding.
     pub fn toggle_visibility(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) {
         self.visible = !self.visible;
         #[cfg(target_os = "windows")]
+        set_window_visible(_window, self.visible);
+        #[cfg(target_os = "macos")]
         set_window_visible(_window, self.visible);
         cx.notify();
     }
@@ -867,6 +868,8 @@ pub fn open_overlay_window(cx: &mut App) -> anyhow::Result<WindowHandle<OverlayH
         set_window_topmost(window);
         #[cfg(target_os = "windows")]
         disable_window_resize(window);
+        #[cfg(target_os = "macos")]
+        hide_traffic_lights(window);
 
         window.on_window_should_close(cx, |_window, cx| {
             cx.defer(|cx| cx.quit());
@@ -1047,6 +1050,85 @@ unsafe extern "system" {
         wparam: usize,
         lparam: isize,
     ) -> isize;
+}
+
+/// Hides the macOS traffic light buttons (close/minimize/zoom) on the overlay window.
+///
+/// GPUI always creates windows with `NSTitledWindowMask` which adds the traffic lights.
+/// `TitlebarOptions::traffic_light_position = None` only skips repositioning — it does
+/// not hide them. We get the `NSView` from `raw_window_handle`, walk up to its
+/// `NSWindow`, then call `setHidden:YES` on each standard window button.
+#[cfg(target_os = "macos")]
+fn hide_traffic_lights(window: &Window) {
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::HasWindowHandle;
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        tracing::warn!("failed to get native window handle for traffic light hiding");
+        return;
+    };
+
+    let raw_window_handle::RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        tracing::warn!("unexpected non-AppKit window handle");
+        return;
+    };
+
+    let ns_view = appkit.ns_view.as_ptr() as *mut objc::runtime::Object;
+
+    unsafe {
+        let ns_window: *mut objc::runtime::Object = msg_send![ns_view, window];
+        if ns_window.is_null() {
+            tracing::warn!("NSView has no parent NSWindow");
+            return;
+        }
+
+        // NSWindowButton constants: Close = 0, Miniaturize = 1, Zoom = 2
+        for button_id in 0u64..3u64 {
+            let button: *mut objc::runtime::Object =
+                msg_send![ns_window, standardWindowButton: button_id];
+            if !button.is_null() {
+                let () = msg_send![button, setHidden: true];
+            }
+        }
+    }
+
+    tracing::debug!("macOS traffic light buttons hidden on overlay");
+}
+
+/// Shows or hides the overlay window using NSWindow `orderOut:` / `orderFront:`.
+///
+/// `orderOut:` removes the window from the screen without closing it.
+/// `orderFront:` makes it visible again without stealing keyboard focus.
+#[cfg(target_os = "macos")]
+fn set_window_visible(window: &Window, visible: bool) {
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::HasWindowHandle;
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        tracing::warn!("failed to get native window handle for visibility toggle");
+        return;
+    };
+
+    let raw_window_handle::RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        tracing::warn!("unexpected non-AppKit window handle");
+        return;
+    };
+
+    let ns_view = appkit.ns_view.as_ptr() as *mut objc::runtime::Object;
+
+    unsafe {
+        let ns_window: *mut objc::runtime::Object = msg_send![ns_view, window];
+        if ns_window.is_null() {
+            tracing::warn!("NSView has no parent NSWindow");
+            return;
+        }
+
+        if visible {
+            let () = msg_send![ns_window, orderFront: std::ptr::null::<objc::runtime::Object>()];
+        } else {
+            let () = msg_send![ns_window, orderOut: std::ptr::null::<objc::runtime::Object>()];
+        }
+    }
 }
 
 /// Map readiness and pipeline state to display label, indicator color, and pulse flag.

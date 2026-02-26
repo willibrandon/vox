@@ -175,7 +175,7 @@ fn sysctl_string(name: &str) -> Option<String> {
             c_name.as_ptr(),
             std::ptr::null_mut(),
             &mut size,
-            std::ptr::null(),
+            std::ptr::null_mut(),
             0,
         )
     };
@@ -189,7 +189,7 @@ fn sysctl_string(name: &str) -> Option<String> {
             c_name.as_ptr(),
             buf.as_mut_ptr() as *mut libc::c_void,
             &mut size,
-            std::ptr::null(),
+            std::ptr::null_mut(),
             0,
         )
     };
@@ -216,7 +216,7 @@ fn sysctl_u64(name: &str) -> Option<u64> {
             c_name.as_ptr(),
             &mut value as *mut u64 as *mut libc::c_void,
             &mut size,
-            std::ptr::null(),
+            std::ptr::null_mut(),
             0,
         )
     };

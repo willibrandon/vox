@@ -1065,7 +1065,7 @@ mod tests {
 
         // Simulate LLM: fails both times → segment discarded
         let result: Result<String, VoxError> =
-            retry_once("LLM process", "hello world".to_string(), move |text| {
+            retry_once("LLM process", "hello world".to_string(), move |_text| {
                 let counter = counter.clone();
                 async move {
                     counter.fetch_add(1, Ordering::SeqCst);

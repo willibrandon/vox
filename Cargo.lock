@@ -7491,6 +7491,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "objc",
  "parking_lot",
  "raw-window-handle",
  "serde",

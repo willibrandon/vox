@@ -3,6 +3,12 @@ name = "vox_ui"
 version.workspace = true
 edition.workspace = true
 
+[lints.rust]
+# objc 0.2's sel_impl macro checks cfg(feature = "cargo-clippy") internally.
+# Rust 2024 edition evaluates macro-expanded cfgs in the calling crate's context,
+# so we must declare this value as expected to avoid unexpected_cfgs warnings.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [lib]
 name = "vox_ui"
 path = "src/vox_ui.rs"
@@ -16,3 +22,6 @@ tracing.workspace = true
 smallvec = { version = "1.11", features = ["union"] }
 anyhow.workspace = true
 raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
