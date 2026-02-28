@@ -12,9 +12,11 @@ use gpui::{
 };
 
 use vox_core::audio::capture::list_input_devices;
-use vox_core::config::{OverlayPosition, Settings, ThemeMode};
+use vox_core::config::{DebugAudioLevel, OverlayPosition, Settings, ThemeMode};
 use vox_core::hotkey_interpreter::ActivationMode;
 use vox_core::state::VoxState;
+
+use gpui::ClipboardItem;
 
 use crate::hotkey_recorder::HotkeyRecorder;
 use crate::layout::{radius, spacing};
@@ -71,6 +73,8 @@ pub struct SettingsPanel {
     position_select: Entity<Select>,
 
     // --- Advanced controls ---
+    /// Dropdown for debug audio recording level (Off / Segments Only / Full).
+    debug_audio_select: Entity<Select>,
     /// Slider for maximum audio segment duration (ms).
     max_segment_slider: Entity<Slider>,
     /// Slider for overlap between consecutive segments (ms).
@@ -418,6 +422,37 @@ impl SettingsPanel {
             .with_content(settings.command_prefix.clone())
         });
 
+        let debug_audio_value = match settings.debug_audio {
+            DebugAudioLevel::Off => "Off",
+            DebugAudioLevel::Segments => "Segments",
+            DebugAudioLevel::Full => "Full",
+        };
+        let debug_audio_select = cx.new(|cx| {
+            Select::new(
+                cx,
+                vec![
+                    SelectOption::new("Off", "Off"),
+                    SelectOption::new("Segments", "Segments Only"),
+                    SelectOption::new("Full", "Full (includes raw capture)"),
+                ],
+                debug_audio_value,
+                "Debug Audio Recording",
+                move |value, _window, cx| {
+                    let level = match value {
+                        "Segments" => DebugAudioLevel::Segments,
+                        "Full" => DebugAudioLevel::Full,
+                        _ => DebugAudioLevel::Off,
+                    };
+                    let state = cx.global::<VoxState>();
+                    if let Err(err) = state.update_settings(|s| s.debug_audio = level) {
+                        tracing::warn!(%err, "failed to save debug audio level");
+                    }
+                    state.debug_tap().set_level(level);
+                    cx.notify(panel_id);
+                },
+            )
+        });
+
         // Enumerate audio devices on a background thread, then replace the
         // device_select entity with one containing the full device list.
         {
@@ -488,6 +523,7 @@ impl SettingsPanel {
             theme_select,
             opacity_slider,
             position_select,
+            debug_audio_select,
             max_segment_slider,
             overlap_slider,
             command_prefix_input,
@@ -666,6 +702,13 @@ impl SettingsPanel {
     /// Render the Advanced settings section.
     fn render_advanced_section(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = cx.global::<VoxTheme>();
+        let debug_audio_active = self.settings.debug_audio != DebugAudioLevel::Off;
+        let debug_dir_path = if debug_audio_active {
+            let state = cx.global::<VoxState>();
+            Some(state.debug_tap().debug_audio_dir().to_string_lossy().to_string())
+        } else {
+            None
+        };
 
         div()
             .flex()
@@ -678,9 +721,43 @@ impl SettingsPanel {
             .border_color(theme.colors.border)
             .child(Self::render_section_header(
                 "Advanced",
-                "Segment timing and command configuration",
+                "Segment timing, command configuration, and debug audio",
                 theme,
             ))
+            .child(self.debug_audio_select.clone())
+            .when_some(debug_dir_path, |this, path| {
+                let path_for_copy = path.clone();
+                let muted = theme.colors.text_muted;
+                let accent = theme.colors.accent;
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(spacing::SM)
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .flex_shrink()
+                                .overflow_x_hidden()
+                                .child(SharedString::from(path)),
+                        )
+                        .child(
+                            div()
+                                .id("copy-debug-dir")
+                                .text_size(px(11.0))
+                                .text_color(accent)
+                                .cursor_pointer()
+                                .flex_shrink_0()
+                                .child("Copy")
+                                .on_click(move |_, _window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        path_for_copy.clone(),
+                                    ));
+                                }),
+                        ),
+                )
+            })
             .child(self.max_segment_slider.clone())
             .child(self.overlap_slider.clone())
             .child(

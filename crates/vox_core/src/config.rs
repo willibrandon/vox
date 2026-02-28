@@ -12,6 +12,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::hotkey_interpreter::ActivationMode;
 
+/// Debug audio recording level.
+///
+/// Controls which audio tap points are active. At `Off` (default), no audio
+/// files are written and runtime overhead is a single atomic load (~1 ns).
+/// `Segments` records per-utterance WAV files only (VAD segment + ASR input).
+/// `Full` adds continuous raw microphone and post-resampler streams.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DebugAudioLevel {
+    /// No debug audio recording. Zero runtime overhead.
+    #[default]
+    Off,
+    /// Record per-segment taps only (vad_segment + asr_input).
+    /// Low data volume: ~1-5 small WAV files per minute.
+    Segments,
+    /// Record all taps including continuous raw capture and post-resample.
+    /// High data volume: ~256 KB/s while recording.
+    Full,
+}
+
 /// Overlay HUD placement on screen.
 ///
 /// Determines where the dictation overlay appears. `Custom` allows the user
@@ -56,7 +76,7 @@ pub enum ThemeMode {
 /// and backward-compatible (uses defaults for missing fields) via
 /// `#[serde(default)]`.
 ///
-/// 22 fields across 7 categories:
+/// 23 fields across 8 categories:
 /// - Audio (2): input_device, noise_gate
 /// - VAD (3): vad_threshold, min_silence_ms, min_speech_ms
 /// - ASR (2): language, whisper_model
@@ -64,6 +84,7 @@ pub enum ThemeMode {
 /// - Hotkey (2): activation_hotkey, activation_mode
 /// - Appearance (4): overlay_position, overlay_opacity, show_raw_transcript, theme
 /// - Advanced (4): max_segment_ms, overlap_ms, command_prefix, save_history
+/// - Debug (1): debug_audio
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Settings {
@@ -133,6 +154,12 @@ pub struct Settings {
     /// Whether to persist transcript history to the database.
     pub save_history: bool,
 
+    // --- Debug (1 field) ---
+
+    /// Debug audio recording level (Off, Segments, or Full).
+    #[serde(default)]
+    pub debug_audio: DebugAudioLevel,
+
     // --- Window position (4 fields) ---
 
     /// Saved settings window X position (pixels from left).
@@ -174,6 +201,7 @@ impl Default for Settings {
             overlap_ms: 1_000,
             command_prefix: "hey vox".into(),
             save_history: true,
+            debug_audio: DebugAudioLevel::default(),
             window_x: None,
             window_y: None,
             window_width: None,

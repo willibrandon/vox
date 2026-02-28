@@ -6,6 +6,7 @@
 //! the 16 kHz mono f32 format required by the downstream VAD and ASR stages.
 
 pub mod capture;
+pub mod debug_tap;
 pub mod resampler;
 pub mod ring_buffer;
 

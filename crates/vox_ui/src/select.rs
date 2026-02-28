@@ -5,8 +5,8 @@
 //! when opened. Supports keyboard navigation and focus-based closing.
 
 use gpui::{
-    div, prelude::*, px, App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent, Render,
-    SharedString, Window,
+    deferred, div, prelude::*, px, App, Context, Entity, FocusHandle, IntoElement, KeyDownEvent,
+    Render, SharedString, Window,
 };
 
 use crate::icon::{Icon, IconElement};
@@ -144,7 +144,8 @@ impl Render for Select {
                 .child(IconElement::new(Icon::ChevronDown, theme.colors.text_muted)),
         );
 
-        // Dropdown options
+        // Dropdown options — wrapped in deferred() so it paints above sibling
+        // elements (sliders, inputs) that would otherwise occlude it.
         if open {
             let mut dropdown = div()
                 .absolute()
@@ -154,6 +155,7 @@ impl Render for Select {
                 .border_1()
                 .border_color(theme.colors.border)
                 .rounded(radius::SM)
+                .occlude()
                 .flex()
                 .flex_col();
 
@@ -186,7 +188,7 @@ impl Render for Select {
                 );
             }
 
-            container = container.child(dropdown);
+            container = container.child(deferred(dropdown).with_priority(1));
         }
 
         container

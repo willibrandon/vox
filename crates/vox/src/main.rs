@@ -266,7 +266,7 @@ fn register_pipeline_actions(cx: &mut App) {
 /// that forwards pipeline state broadcasts to the overlay HUD.
 fn start_recording(cx: &mut App) -> anyhow::Result<()> {
     // Read all needed values from VoxState in one borrow scope
-    let (device_name, vad_config, asr, llm, dictionary, transcript_writer, tokio_handle) = {
+    let (device_name, vad_config, asr, llm, dictionary, transcript_writer, tokio_handle, debug_tap) = {
         let state = cx.global::<VoxState>();
 
         let settings = state.settings();
@@ -293,6 +293,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
         let dictionary = state.dictionary().clone();
         let transcript_writer = state.transcript_writer();
         let tokio_handle = state.tokio_runtime().handle().clone();
+        let debug_tap = std::sync::Arc::clone(state.debug_tap());
 
         (
             device_name,
@@ -302,6 +303,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
             dictionary,
             transcript_writer,
             tokio_handle,
+            debug_tap,
         )
     };
 
@@ -332,6 +334,10 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
     let (state_tx, _) = tokio::sync::broadcast::channel::<PipelineState>(64);
     let (command_tx, command_rx) = tokio::sync::mpsc::channel::<PipelineCommand>(16);
 
+    // Wire debug tap's error notification channel so write failures
+    // surface in the overlay via PipelineState::Error.
+    debug_tap.set_state_tx(state_tx.clone());
+
     // Create pipeline with all components wired in
     let mut pipeline = Pipeline::new(
         asr,
@@ -342,6 +348,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
         command_rx,
         vad_model_path,
         vad_config,
+        debug_tap,
     );
 
     // Start pipeline: spawns VAD thread, broadcasts Listening

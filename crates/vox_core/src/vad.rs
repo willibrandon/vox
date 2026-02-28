@@ -19,6 +19,8 @@ use anyhow::Result;
 use ringbuf::traits::{Consumer, Observer};
 use ringbuf::HeapCons;
 
+use crate::audio::debug_tap::DebugAudioTap;
+
 /// Configuration parameters for the voice activity detection subsystem.
 ///
 /// All timing values have sensible defaults tuned for real-time dictation.
@@ -238,8 +240,10 @@ impl VadStateMachine {
 fn run_passthrough_loop(
     consumer: &mut HeapCons<f32>,
     mut resampler: Option<&mut crate::audio::AudioResampler>,
-    segment_tx: &tokio::sync::mpsc::Sender<Vec<f32>>,
+    segment_tx: &tokio::sync::mpsc::Sender<(Vec<f32>, u32)>,
     stop: &std::sync::atomic::AtomicBool,
+    debug_tap: &DebugAudioTap,
+    native_sample_rate: u32,
 ) -> Result<()> {
     // Accumulate raw samples at the device's native sample rate. Resampling
     // happens once on the complete buffer after recording stops — this avoids
@@ -247,6 +251,8 @@ fn run_passthrough_loop(
     // variable-sized batches incrementally.
     let mut raw_buffer: Vec<f32> = Vec::with_capacity(48000 * 10);
     let mut read_buffer = vec![0.0f32; 1024];
+
+    debug_tap.start_session(native_sample_rate);
 
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         let available = consumer.occupied_len();
@@ -262,6 +268,7 @@ fn run_passthrough_loop(
             continue;
         }
 
+        debug_tap.tap_raw(&read_buffer[..read_count]);
         raw_buffer.extend_from_slice(&read_buffer[..read_count]);
     }
 
@@ -283,6 +290,7 @@ fn run_passthrough_loop(
 
     if raw_buffer.is_empty() {
         tracing::debug!("passthrough: no audio captured, nothing to send");
+        debug_tap.end_session();
         return Ok(());
     }
 
@@ -299,7 +307,14 @@ fn run_passthrough_loop(
         duration_ms,
         "passthrough: sending entire recording as one segment"
     );
-    segment_tx.blocking_send(audio_buffer).ok();
+
+    for chunk in audio_buffer.chunks(16000) {
+        debug_tap.tap_resampled(chunk);
+    }
+    let seg_idx = debug_tap.tap_vad_segment(&audio_buffer);
+    segment_tx.blocking_send((audio_buffer, seg_idx)).ok();
+
+    debug_tap.end_session();
 
     Ok(())
 }
@@ -322,17 +337,28 @@ pub fn run_vad_loop(
     vad: &mut SileroVad,
     state_machine: &mut VadStateMachine,
     chunker: &mut SpeechChunker,
-    segment_tx: &tokio::sync::mpsc::Sender<Vec<f32>>,
+    segment_tx: &tokio::sync::mpsc::Sender<(Vec<f32>, u32)>,
     stop: &std::sync::atomic::AtomicBool,
     config: &VadConfig,
+    debug_tap: &DebugAudioTap,
+    native_sample_rate: u32,
 ) -> Result<()> {
     if config.bypass_vad {
-        return run_passthrough_loop(consumer, resampler, segment_tx, stop);
+        return run_passthrough_loop(
+            consumer,
+            resampler,
+            segment_tx,
+            stop,
+            debug_tap,
+            native_sample_rate,
+        );
     }
 
     let window_size = 512;
     let mut accumulation_buffer: Vec<f32> = Vec::with_capacity(window_size * 4);
     let mut read_buffer = vec![0.0f32; window_size * 2];
+
+    debug_tap.start_session(native_sample_rate);
 
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // Read all available samples from the ring buffer
@@ -349,6 +375,8 @@ pub fn run_vad_loop(
             continue;
         }
 
+        debug_tap.tap_raw(&read_buffer[..read_count]);
+
         // Optionally resample to 16 kHz
         let samples = if let Some(ref mut resampler) = resampler {
             match resampler.process(&read_buffer[..read_count]) {
@@ -362,6 +390,7 @@ pub fn run_vad_loop(
             read_buffer[..read_count].to_vec()
         };
 
+        debug_tap.tap_resampled(&samples);
         accumulation_buffer.extend_from_slice(&samples);
 
         // Process all complete 512-sample windows
@@ -380,12 +409,13 @@ pub fn run_vad_loop(
             let event = state_machine.update(speech_prob);
             let segment = chunker.feed(&window, event.as_ref());
 
-            if let Some(segment) = segment {
+            if let Some(ref segment) = segment {
                 // blocking_send blocks the VAD thread until channel has space,
                 // guaranteeing no segment drops under backpressure (FR-017).
                 // The .ok() discards the SendError that only occurs if the
                 // receiver is dropped (normal shutdown).
-                segment_tx.blocking_send(segment).ok();
+                let seg_idx = debug_tap.tap_vad_segment(segment);
+                segment_tx.blocking_send((segment.clone(), seg_idx)).ok();
             }
         }
     }
@@ -436,8 +466,9 @@ pub fn run_vad_loop(
         let event = state_machine.update(speech_prob);
         let segment = chunker.feed(&window, event.as_ref());
 
-        if let Some(segment) = segment {
-            segment_tx.blocking_send(segment).ok();
+        if let Some(ref segment) = segment {
+            let seg_idx = debug_tap.tap_vad_segment(segment);
+            segment_tx.blocking_send((segment.clone(), seg_idx)).ok();
         }
     }
 
@@ -458,16 +489,20 @@ pub fn run_vad_loop(
         let event = state_machine.update(speech_prob);
         let segment = chunker.feed(&accumulation_buffer, event.as_ref());
 
-        if let Some(segment) = segment {
-            segment_tx.blocking_send(segment).ok();
+        if let Some(ref segment) = segment {
+            let seg_idx = debug_tap.tap_vad_segment(segment);
+            segment_tx.blocking_send((segment.clone(), seg_idx)).ok();
         }
     }
 
     // Flush any remaining accumulated speech (e.g. user stopped mid-utterance
     // before the state machine detected silence)
-    if let Some(segment) = chunker.flush() {
-        segment_tx.blocking_send(segment).ok();
+    if let Some(ref segment) = chunker.flush() {
+        let seg_idx = debug_tap.tap_vad_segment(segment);
+        segment_tx.blocking_send((segment.clone(), seg_idx)).ok();
     }
+
+    debug_tap.end_session();
 
     Ok(())
 }
@@ -648,12 +683,17 @@ mod tests {
             SileroVad::new(&model_path).expect("Failed to load VAD model");
         let mut state_machine = VadStateMachine::new(config.clone());
         let mut chunker = SpeechChunker::new(config.clone());
-        let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel(4);
+        let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel::<(Vec<f32>, u32)>(4);
         let (mut producer, mut consumer) =
             AudioRingBuffer::new(AudioRingBuffer::capacity_for_rate(16000));
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
+
+        let tap = DebugAudioTap::new(
+            &std::env::temp_dir().join("vox_vad_test_1"),
+            crate::config::DebugAudioLevel::Off,
+        );
 
         // Run processing loop in a thread
         let loop_handle = std::thread::spawn(move || {
@@ -666,6 +706,8 @@ mod tests {
                 &segment_tx,
                 &stop_flag,
                 &config,
+                &tap,
+                16000,
             )
         });
 
@@ -689,7 +731,7 @@ mod tests {
 
         // Check that at least one segment was emitted
         let mut segments = Vec::new();
-        while let Ok(seg) = segment_rx.try_recv() {
+        while let Ok((seg, _seg_idx)) = segment_rx.try_recv() {
             segments.push(seg);
         }
 
@@ -737,12 +779,17 @@ mod tests {
             SileroVad::new(&model_path).expect("Failed to load VAD model");
         let mut state_machine = VadStateMachine::new(config.clone());
         let mut chunker = SpeechChunker::new(config.clone());
-        let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel(16);
+        let (segment_tx, mut segment_rx) = tokio::sync::mpsc::channel::<(Vec<f32>, u32)>(16);
         let (mut producer, mut consumer) =
             AudioRingBuffer::new(AudioRingBuffer::capacity_for_rate(16000));
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
+
+        let tap = DebugAudioTap::new(
+            &std::env::temp_dir().join("vox_vad_test_2"),
+            crate::config::DebugAudioLevel::Off,
+        );
 
         let loop_handle = std::thread::spawn(move || {
             run_vad_loop(
@@ -754,6 +801,8 @@ mod tests {
                 &segment_tx,
                 &stop_flag,
                 &config,
+                &tap,
+                16000,
             )
         });
 
@@ -782,7 +831,7 @@ mod tests {
         loop_handle.join().expect("loop panicked").expect("loop error");
 
         let mut segments = Vec::new();
-        while let Ok(seg) = segment_rx.try_recv() {
+        while let Ok((seg, _seg_idx)) = segment_rx.try_recv() {
             segments.push(seg);
         }
 

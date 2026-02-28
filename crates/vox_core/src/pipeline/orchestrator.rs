@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::asr::AsrEngine;
+use crate::audio::debug_tap::DebugAudioTap;
 use crate::dictionary::DictionaryCache;
 use crate::error::VoxError;
 use crate::injector;
@@ -40,7 +41,8 @@ pub struct Pipeline {
     state_tx: broadcast::Sender<PipelineState>,
     command_rx: mpsc::Receiver<PipelineCommand>,
     stop_flag: Arc<AtomicBool>,
-    segment_rx: Option<mpsc::Receiver<Vec<f32>>>,
+    debug_tap: Arc<DebugAudioTap>,
+    segment_rx: Option<mpsc::Receiver<(Vec<f32>, u32)>>,
     vad_handle: Option<JoinHandle<Result<()>>>,
     vad_model_path: PathBuf,
     vad_config: VadConfig,
@@ -80,6 +82,7 @@ impl Pipeline {
         command_rx: mpsc::Receiver<PipelineCommand>,
         vad_model_path: PathBuf,
         vad_config: VadConfig,
+        debug_tap: Arc<DebugAudioTap>,
     ) -> Self {
         Self {
             asr,
@@ -89,6 +92,7 @@ impl Pipeline {
             state_tx,
             command_rx,
             stop_flag: Arc::new(AtomicBool::new(false)),
+            debug_tap,
             segment_rx: None,
             vad_handle: None,
             vad_model_path,
@@ -115,13 +119,14 @@ impl Pipeline {
     ) -> Result<()> {
         self.stop_flag.store(false, Ordering::Release);
 
-        let (segment_tx, segment_rx) = mpsc::channel::<Vec<f32>>(32);
+        let (segment_tx, segment_rx) = mpsc::channel::<(Vec<f32>, u32)>(32);
         self.segment_rx = Some(segment_rx);
 
         let stop_flag = self.stop_flag.clone();
         let vad_model_path = self.vad_model_path.clone();
         let vad_config = self.vad_config.clone();
 
+        let debug_tap = Arc::clone(&self.debug_tap);
         let vad_handle = std::thread::spawn(move || -> Result<()> {
             let mut vad_model = vad::SileroVad::new(&vad_model_path)?;
             let mut resampler_opt =
@@ -138,6 +143,8 @@ impl Pipeline {
                 &segment_tx,
                 &stop_flag,
                 &vad_config,
+                &debug_tap,
+                native_sample_rate,
             )
         });
 
@@ -163,8 +170,8 @@ impl Pipeline {
             tokio::select! {
                 segment = segment_rx.recv() => {
                     match segment {
-                        Some(audio_segment) => {
-                            match self.process_segment(audio_segment).await {
+                        Some((audio_segment, seg_idx)) => {
+                            match self.process_segment(audio_segment, seg_idx).await {
                                 Ok(()) => {}
                                 Err(error) => {
                                     self.broadcast(PipelineState::Error {
@@ -209,8 +216,8 @@ impl Pipeline {
         // 2. Drain buffered segments to free channel capacity. This unblocks
         //    any in-flight blocking_send inside the VAD while loop, allowing
         //    the thread to see the stop flag on the next iteration.
-        while let Ok(segment) = segment_rx.try_recv() {
-            if let Err(error) = self.process_segment(segment).await {
+        while let Ok((segment, seg_idx)) = segment_rx.try_recv() {
+            if let Err(error) = self.process_segment(segment, seg_idx).await {
                 self.broadcast(PipelineState::Error {
                     message: error.to_string(),
                 });
@@ -238,8 +245,8 @@ impl Pipeline {
 
         // 4. Drain again to pick up the flushed segment and any segments
         //    produced between step 2 and the thread exiting.
-        while let Ok(segment) = segment_rx.try_recv() {
-            if let Err(error) = self.process_segment(segment).await {
+        while let Ok((segment, seg_idx)) = segment_rx.try_recv() {
+            if let Err(error) = self.process_segment(segment, seg_idx).await {
                 self.broadcast(PipelineState::Error {
                     message: error.to_string(),
                 });
@@ -292,7 +299,7 @@ impl Pipeline {
     /// Flow: silent pre-check → silence-pad → ASR → dictionary substitution →
     /// focused app detection → LLM post-processing → injection/command →
     /// transcript save.
-    async fn process_segment(&mut self, segment: Vec<f32>) -> Result<()> {
+    async fn process_segment(&mut self, segment: Vec<f32>, segment_index: u32) -> Result<()> {
         // Check audio device health before processing (T017)
         if let Some(ref flag) = self.audio_error_flag {
             if flag.load(Ordering::Acquire) {
@@ -335,6 +342,8 @@ impl Pipeline {
         let mut padded_segment = Vec::with_capacity(silence_pad_samples + segment.len());
         padded_segment.resize(silence_pad_samples, 0.0f32);
         padded_segment.extend_from_slice(&segment);
+
+        self.debug_tap.tap_asr_input(segment_index, &padded_segment);
 
         // ASR (GPU-bound) — retry once on failure, discard segment on second failure
         let asr_start = Instant::now();
@@ -792,6 +801,11 @@ mod tests {
         let vad_model_path = fixtures_dir().join("silero_vad_v5.onnx");
         let vad_config = crate::vad::VadConfig::default();
 
+        let debug_tap = Arc::new(DebugAudioTap::new(
+            dir.path(),
+            crate::config::DebugAudioLevel::Off,
+        ));
+
         let pipeline = Pipeline::new(
             asr,
             llm,
@@ -801,6 +815,7 @@ mod tests {
             command_rx,
             vad_model_path,
             vad_config,
+            debug_tap,
         );
 
         (pipeline, state_rx, dir)
@@ -944,7 +959,7 @@ mod tests {
         // 1-5 second utterances in practice.
         let samples: Vec<f32> = all_samples.into_iter().take(48000).collect();
 
-        pipeline.process_segment(samples).await.expect("process_segment failed");
+        pipeline.process_segment(samples, 0).await.expect("process_segment failed");
 
         // Verify transcript was saved
         let count = pipeline.transcript_writer.count().expect("count");
@@ -980,7 +995,7 @@ mod tests {
 
         // All-zero samples should be caught by is_silent and produce no transcript
         let silence = vec![0.0f32; 16000];
-        pipeline.process_segment(silence).await.expect("process_segment failed");
+        pipeline.process_segment(silence, 0).await.expect("process_segment failed");
 
         let count = pipeline.transcript_writer.count().expect("count");
         assert_eq!(count, 0, "silent audio should produce no transcript entry");
@@ -996,7 +1011,7 @@ mod tests {
         // Process the same speech segment 3 times
         for _ in 0..3 {
             pipeline
-                .process_segment(samples.clone())
+                .process_segment(samples.clone(), 0)
                 .await
                 .expect("process_segment failed");
         }
@@ -1161,7 +1176,7 @@ mod tests {
         assert!(!is_silent(&noise), "noise must pass the silence check");
 
         pipeline
-            .process_segment(noise)
+            .process_segment(noise, 0)
             .await
             .expect("noise segment should not error");
 
@@ -1181,7 +1196,7 @@ mod tests {
         let all_samples = load_speech_samples();
         let speech: Vec<f32> = all_samples.into_iter().take(48000).collect();
         pipeline
-            .process_segment(speech)
+            .process_segment(speech, 0)
             .await
             .expect("real speech should succeed after noise");
 
@@ -1220,7 +1235,7 @@ mod tests {
 
         // Segment 1: process through full pipeline
         pipeline
-            .process_segment(speech.clone())
+            .process_segment(speech.clone(), 0)
             .await
             .expect("first speech segment should succeed");
 
@@ -1235,7 +1250,7 @@ mod tests {
 
         // Segment 2: process immediately after — LLM must not be in bad state
         pipeline
-            .process_segment(speech)
+            .process_segment(speech, 0)
             .await
             .expect("second speech segment should succeed after first");
 
@@ -1276,7 +1291,7 @@ mod tests {
         let all_samples = load_speech_samples();
         let speech: Vec<f32> = all_samples.iter().take(48000).copied().collect();
         pipeline
-            .process_segment(speech.clone())
+            .process_segment(speech.clone(), 0)
             .await
             .expect("disconnected segment should not error (it skips gracefully)");
 
@@ -1306,7 +1321,7 @@ mod tests {
 
         // Process after reconnect — should succeed
         pipeline
-            .process_segment(speech)
+            .process_segment(speech, 0)
             .await
             .expect("reconnected segment should succeed");
 
@@ -1366,7 +1381,7 @@ mod tests {
         let speech: Vec<f32> = all_samples.into_iter().take(48000).collect();
 
         pipeline
-            .process_segment(speech)
+            .process_segment(speech, 0)
             .await
             .expect("pipeline should work after simulated wake recovery");
 
@@ -1469,7 +1484,7 @@ mod tests {
         let speech: Vec<f32> = all_samples.into_iter().take(48000).collect();
 
         pipeline
-            .process_segment(speech)
+            .process_segment(speech, 0)
             .await
             .expect("process_segment should succeed");
 

@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use parking_lot::RwLock;
 
 use crate::asr::AsrEngine;
+use crate::audio::debug_tap::DebugAudioTap;
 use crate::config::Settings;
 use crate::dictionary::DictionaryCache;
 use crate::gpu::GpuInfo;
@@ -127,6 +128,8 @@ pub struct VoxState {
     hotkey_rebind_tx: parking_lot::Mutex<Option<Sender<String>>>,
     /// Detected GPU hardware information, queried once at startup.
     gpu_info: RwLock<Option<GpuInfo>>,
+    /// Debug audio tap for recording pipeline audio to WAV files.
+    debug_tap: Arc<DebugAudioTap>,
 }
 
 impl gpui::Global for VoxState {}
@@ -164,6 +167,11 @@ impl VoxState {
             llm_progress: DownloadProgress::Pending,
         };
 
+        let debug_tap = Arc::new(DebugAudioTap::new(
+            data_dir,
+            settings.debug_audio,
+        ));
+
         Ok(Self {
             settings: RwLock::new(settings),
             transcript_store,
@@ -181,6 +189,7 @@ impl VoxState {
             last_latency_ms: RwLock::new(None),
             hotkey_rebind_tx: parking_lot::Mutex::new(None),
             gpu_info: RwLock::new(None),
+            debug_tap,
         })
     }
 
@@ -437,6 +446,11 @@ impl VoxState {
     /// Called during startup after [`crate::gpu::detect_gpu`] completes.
     pub fn set_gpu_info(&self, info: GpuInfo) {
         *self.gpu_info.write() = Some(info);
+    }
+
+    /// Get a shared reference to the debug audio tap.
+    pub fn debug_tap(&self) -> &Arc<DebugAudioTap> {
+        &self.debug_tap
     }
 
     /// Create a transcript writer for pipeline use.
