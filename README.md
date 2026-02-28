@@ -27,8 +27,9 @@ Alpha — nearing daily-driver use. Full voice dictation pipeline runs end-to-en
 - **Settings window** — Full management window with sidebar navigation, configurable audio/VAD/hotkey/LLM/appearance settings, transcript history browser, dictionary editor, model status, and live log viewer
 - **Error handling & self-healing** — Typed error taxonomy (8 categories mapping to 7 recovery actions), retry-once-then-discard for ASR/LLM failures, injection focus retry with 500ms polling, audio device disconnect recovery with 2s polling loop, system sleep/wake resilience (Windows WM_POWERBROADCAST, macOS IOKit), GPU detection at startup (Windows DXGI, macOS sysctl) with actionable guidance
 - **Diagnostic logging** — Structured tracing spans with per-stage timing (ASR, LLM, injection), 10 MB file size cap with silent discard, daily rotation with 7-day retention, configurable via VOX_LOG environment variable
-- **Security & model integrity** — SHA-256 verification of all models at startup, corrupt model re-download, read-only file permissions after download, zero audio files written to disk, zero network after model download
+- **Security & model integrity** — SHA-256 verification of all models at startup, corrupt model re-download, read-only file permissions after download, no audio written to disk by default (opt-in debug audio tap with auto-cleanup), zero network after model download
 - **macOS permissions** — Accessibility and Input Monitoring permission polling (2s interval), auto-proceed on grant without restart, overlay guidance with exact System Settings paths
+- **Audio debug tap** — WAV recording at 4 pipeline stages (raw capture, post-resample, VAD segment, ASR input) for diagnosing audio quality, VAD boundaries, and resampling artifacts. Three-level setting (Off/Segments/Full), bounded channel with backpressure drop, 500 MB storage cap with 24h auto-cleanup, session/segment correlation across tap files
 - **Packaging** — Windows MSI installer (WiX v4), macOS .app bundle with DMG, platform-standard data directories, zero-click first launch
 
 ## Prerequisites
@@ -103,6 +104,7 @@ All user data is stored in platform-standard locations, never alongside the exec
 | Models | `%LOCALAPPDATA%/com.vox.app/models/` | `~/Library/Application Support/com.vox.app/models/` |
 | Transcripts | `%LOCALAPPDATA%/com.vox.app/vox.db` | `~/Library/Application Support/com.vox.app/vox.db` |
 | Logs | `%LOCALAPPDATA%/com.vox.app/logs/` | `~/Library/Logs/com.vox.app/` |
+| Debug Audio | `%LOCALAPPDATA%/com.vox.app/debug_audio/` | `~/Library/Application Support/com.vox.app/debug_audio/` |
 
 Models download automatically on first launch (~2.5 GB total):
 - `silero_vad_v5.onnx` (2.3 MB) — Voice activity detection
