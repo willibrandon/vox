@@ -62,6 +62,9 @@ opt-level = 3
 [profile.dev.package.rubato]
 opt-level = 3
 
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 opt-level = "s"
 lto = true

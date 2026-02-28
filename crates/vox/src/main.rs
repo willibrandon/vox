@@ -92,10 +92,43 @@ impl gpui::Global for AppSubscriptions {}
 fn main() {
     let (_guard, log_receiver) = init_logging();
 
-    // Ctrl+C in the terminal: use _exit() to skip atexit handlers that trigger
-    // Metal residency set assertions in llama.cpp's ggml-metal cleanup.
-    // std::process::exit(0) runs atexit → ggml_metal_device_free → GGML_ASSERT
-    // because GPU resources are still in residency sets during forced teardown.
+    // GUI subsystem processes have no console, so ctrlc's SetConsoleCtrlHandler
+    // never fires. AttachConsole re-attaches to the parent terminal (if any)
+    // when launched via `cargo run`. If that fails (double-click from Explorer,
+    // or MSYS2/mintty without a real Windows console), AllocConsole creates a
+    // hidden console so SetConsoleCtrlHandler has something to listen on.
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn AttachConsole(process_id: u32) -> i32;
+            fn AllocConsole() -> i32;
+            fn GetConsoleWindow() -> isize;
+        }
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn ShowWindow(hwnd: isize, cmd_show: i32) -> i32;
+        }
+        const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+        const SW_HIDE: i32 = 0;
+
+        unsafe {
+            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                // No attachable parent console. Create a hidden one so
+                // SetConsoleCtrlHandler (used by ctrlc crate) can receive
+                // signals. The window is hidden before it has a chance to paint.
+                if AllocConsole() != 0 {
+                    let hwnd = GetConsoleWindow();
+                    if hwnd != 0 {
+                        ShowWindow(hwnd, SW_HIDE);
+                    }
+                }
+            }
+        }
+    }
+
+    // Use _exit() to skip atexit handlers that trigger Metal residency set
+    // assertions in llama.cpp's ggml-metal cleanup on macOS.
     ctrlc::set_handler(|| unsafe { libc::_exit(0) }).ok();
 
     Application::new().run(move |cx: &mut App| {
@@ -958,7 +991,9 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
 
     // GPU detection (US7): detect hardware before model loading so we can
     // show actionable guidance if no compatible GPU is found.
-    match vox_core::gpu::detect_gpu() {
+    // spawn_blocking so the foreground task yields immediately, letting GPUI
+    // paint the overlay before any CPU-intensive work runs.
+    match tokio_handle.spawn_blocking(vox_core::gpu::detect_gpu).await? {
         Some(gpu_info) => {
             tracing::info!(
                 gpu = %gpu_info,
@@ -986,7 +1021,9 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
         }
     }
 
-    let missing = check_missing_models()?;
+    let missing = tokio_handle
+        .spawn_blocking(check_missing_models)
+        .await??;
 
     if !missing.is_empty() {
         tracing::info!(count = missing.len(), "models missing, starting download");
@@ -1016,7 +1053,9 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 "model download failed, starting offline fallback (FR-024)"
             );
 
-            let still_missing = check_missing_models()?;
+            let still_missing = tokio_handle
+                .spawn_blocking(check_missing_models)
+                .await??;
             if !still_missing.is_empty() {
                 let missing_filenames: Vec<&str> =
                     still_missing.iter().map(|m| m.filename).collect();
@@ -1066,7 +1105,10 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
     // SHA-256 verification of all model files (US5). Corrupt files are deleted
     // and flagged for re-download. This catches corruption that occurred while
     // the app was closed (disk errors, partial writes, etc.).
-    let corrupt = models::verify_all_models()?;
+    // spawn_blocking: SHA-256 of ~2.2GB of models takes several seconds.
+    let corrupt = tokio_handle
+        .spawn_blocking(models::verify_all_models)
+        .await??;
     if !corrupt.is_empty() {
         let names: Vec<&str> = corrupt.iter().map(|m| m.name).collect();
         tracing::warn!(?names, "model integrity check failed — re-downloading corrupt models");
@@ -1085,7 +1127,7 @@ async fn try_initialize_pipeline(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .await??;
 
         // Verify again after re-download
-        if !models::all_models_present()? {
+        if !tokio_handle.spawn_blocking(models::all_models_present).await?? {
             anyhow::bail!("models still missing after integrity re-download");
         }
     }

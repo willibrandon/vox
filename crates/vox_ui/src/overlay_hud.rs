@@ -928,13 +928,20 @@ fn set_window_topmost(window: &Window) {
     }
 }
 
-/// Subclasses the window procedure to block resize via `WM_NCHITTEST` remapping.
+/// Subclasses the window procedure to create a truly borderless, non-resizable
+/// overlay.
 ///
-/// GPUI's custom hit-test handler returns resize codes (`HTTOP`, `HTLEFT`, etc.)
-/// for window edges even when `is_resizable: false`. This is because GPUI handles
-/// `WM_NCHITTEST` internally for custom-titlebar dragging and unconditionally
-/// returns resize codes for edge areas. Subclassing intercepts the message and
-/// remaps any resize code to `HTCLIENT`, preventing resize while preserving drag.
+/// Two problems are fixed:
+/// 1. **Resize**: GPUI's hit-test handler returns resize codes (`HTTOP`, etc.)
+///    for edges even with `is_resizable: false`. The subclass remaps them to
+///    `HTCLIENT`.
+/// 2. **DWM border**: GPUI's `WM_NCCALCSIZE` handler calls `DefWindowProcW`
+///    then only restores the top coordinate — left/right/bottom may get a small
+///    non-client area added by DWM for the accent border. The subclass intercepts
+///    `WM_NCCALCSIZE` (returns 0 = entire window is client area) and
+///    `WM_NCACTIVATE` (returns TRUE = no activation-triggered border repaint).
+///    After installation, `SWP_FRAMECHANGED` forces Windows to re-evaluate the
+///    frame with the new handler in place.
 #[cfg(target_os = "windows")]
 fn disable_window_resize(window: &Window) {
     use std::sync::atomic::{AtomicIsize, Ordering};
@@ -943,16 +950,34 @@ fn disable_window_resize(window: &Window) {
     /// Stores the original GPUI window procedure pointer.
     static ORIGINAL_WNDPROC: AtomicIsize = AtomicIsize::new(0);
 
-    /// Replacement window procedure that intercepts `WM_NCHITTEST` and remaps
-    /// resize edge codes to `HTCLIENT`.
+    /// Replacement window procedure that suppresses non-client area rendering
+    /// and remaps resize edge hit-test codes to `HTCLIENT`.
+    ///
+    /// `WM_NCCALCSIZE` and `WM_NCACTIVATE` are intercepted *before* GPUI to
+    /// eliminate the non-client area entirely. `WM_NCHITTEST` chains through
+    /// to GPUI then remaps resize codes.
     unsafe extern "system" fn no_resize_proc(
         hwnd: isize,
         msg: u32,
         wparam: usize,
         lparam: isize,
     ) -> isize {
+        const WM_NCCALCSIZE: u32 = 0x0083;
         const WM_NCHITTEST: u32 = 0x0084;
+        const WM_NCACTIVATE: u32 = 0x0086;
         const HTCLIENT: isize = 1;
+
+        // Entire window is client area — no non-client border for DWM to draw.
+        // GPUI's handler would call DefWindowProcW which can add left/right/bottom
+        // non-client pixels on Windows 11 for the accent border.
+        if msg == WM_NCCALCSIZE && wparam != 0 {
+            return 0;
+        }
+
+        // Suppress activation-triggered non-client repaint (DWM border flash).
+        if msg == WM_NCACTIVATE {
+            return 1;
+        }
 
         let original = ORIGINAL_WNDPROC.load(Ordering::Relaxed);
         let result = unsafe { win32_call_window_proc(original, hwnd, msg, wparam, lparam) };
@@ -989,7 +1014,28 @@ fn disable_window_resize(window: &Window) {
         tracing::warn!("SetWindowLongPtrW(GWLP_WNDPROC) failed");
     } else {
         ORIGINAL_WNDPROC.store(original, Ordering::Relaxed);
-        tracing::info!("overlay window resize disabled via WM_NCHITTEST subclass");
+        tracing::info!("overlay window subclass installed (resize + DWM border suppression)");
+    }
+
+    // Trigger WM_NCCALCSIZE so the subclass's handler runs and eliminates any
+    // non-client area that GPUI's handler established during window creation.
+    // The subclass must already be installed before this call.
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+
+    unsafe {
+        win32_set_window_pos(
+            hwnd,
+            0,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
     }
 }
 
