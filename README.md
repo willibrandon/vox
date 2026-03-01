@@ -67,6 +67,9 @@ cargo build -p vox --features vox_core/metal  # macOS
 cargo test -p vox_core --features cuda        # Windows
 cargo test -p vox_core --features metal       # macOS
 
+# Diagnostics tools (CLI + MCP server)
+cargo build -p vox_tool -p vox_mcp
+
 # Release
 cargo build --release -p vox --features vox_core/cuda
 ```
