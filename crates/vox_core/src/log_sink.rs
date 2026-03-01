@@ -4,8 +4,11 @@
 //! into [`LogEntry`] structs and sends them over an unbounded mpsc channel.
 //! The UI receives entries via [`LogReceiver`] to display in the log panel.
 
+use std::collections::VecDeque;
 use std::fmt;
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::field::{Field, Visit};
 
@@ -77,6 +80,55 @@ impl LogLevel {
     }
 }
 
+/// Thread-safe log buffer for the diagnostics listener.
+///
+/// Stores the most recent log entries in a bounded ring buffer, accessible
+/// from the diagnostics handler thread without GPUI involvement. Shared via
+/// `Arc` between `LogSink` (writer) and `VoxState` (reader accessor).
+pub struct LogBuffer {
+    entries: RwLock<VecDeque<LogEntry>>,
+    capacity: usize,
+}
+
+impl LogBuffer {
+    const DEFAULT_CAPACITY: usize = 10_000;
+
+    /// Create a new log buffer with the default capacity (10,000 entries).
+    pub fn new() -> Self {
+        Self {
+            entries: RwLock::new(VecDeque::with_capacity(Self::DEFAULT_CAPACITY)),
+            capacity: Self::DEFAULT_CAPACITY,
+        }
+    }
+
+    /// Push a log entry, evicting the oldest if at capacity.
+    pub fn push(&self, entry: LogEntry) {
+        let mut entries = self.entries.write();
+        if entries.len() >= self.capacity {
+            entries.pop_front();
+        }
+        entries.push_back(entry);
+    }
+
+    /// Get the most recent `count` entries, optionally filtered by minimum level.
+    ///
+    /// Returns entries from oldest to newest (chronological order).
+    pub fn recent(&self, count: usize, min_level: Option<LogLevel>) -> Vec<LogEntry> {
+        let entries = self.entries.read();
+        let iter = entries.iter().rev();
+        let filtered: Vec<LogEntry> = match min_level {
+            Some(level) => iter
+                .filter(|e| e.level <= level)
+                .take(count)
+                .cloned()
+                .collect(),
+            None => iter.take(count).cloned().collect(),
+        };
+        // Reverse back to chronological order
+        filtered.into_iter().rev().collect()
+    }
+}
+
 /// Visitor that extracts the message field from a tracing event.
 struct MessageVisitor {
     message: String,
@@ -114,12 +166,14 @@ impl Visit for MessageVisitor {
     }
 }
 
-/// Tracing layer that captures events and sends them to the UI.
+/// Tracing layer that captures events and sends them to the UI and log buffer.
 ///
 /// Created via [`LogSink::new`] which returns both the layer and a
-/// [`LogReceiver`] for the UI to consume.
+/// [`LogReceiver`] for the UI to consume. Optionally pushes entries into a
+/// [`LogBuffer`] for diagnostics access outside the GPUI thread.
 pub struct LogSink {
     sender: mpsc::UnboundedSender<LogEntry>,
+    log_buffer: Option<Arc<LogBuffer>>,
 }
 
 /// Receiver end of the log channel for UI consumption.
@@ -137,9 +191,9 @@ impl LogSink {
     /// The sink implements `tracing_subscriber::Layer` and should be added
     /// to the subscriber. The receiver should be passed to `VoxState` for
     /// the log panel to consume.
-    pub fn new() -> (Self, LogReceiver) {
+    pub fn new(log_buffer: Option<Arc<LogBuffer>>) -> (Self, LogReceiver) {
         let (sender, rx) = mpsc::unbounded_channel();
-        (Self { sender }, LogReceiver { rx })
+        (Self { sender, log_buffer }, LogReceiver { rx })
     }
 }
 
@@ -162,6 +216,11 @@ where
             target: metadata.target().to_string(),
             message: visitor.message,
         };
+
+        // Push to diagnostics log buffer if configured
+        if let Some(buffer) = &self.log_buffer {
+            buffer.push(entry.clone());
+        }
 
         // Ignore send errors — receiver may have been dropped if the
         // settings window was closed.
@@ -257,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_log_sink_sends_entries() {
-        let (sink, mut receiver) = LogSink::new();
+        let (sink, mut receiver) = LogSink::new(None);
         let entry = LogEntry {
             timestamp: "2026-02-24T10:00:00Z".into(),
             level: LogLevel::Info,

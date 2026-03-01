@@ -16,3 +16,4 @@ pub mod error;
 pub mod recovery;
 pub mod gpu;
 pub mod power;
+pub mod diagnostics;

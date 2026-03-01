@@ -20,10 +20,11 @@ use parking_lot::RwLock;
 use crate::asr::AsrEngine;
 use crate::audio::debug_tap::DebugAudioTap;
 use crate::config::Settings;
+use crate::diagnostics::listener::DiagnosticsCommand;
 use crate::dictionary::DictionaryCache;
 use crate::gpu::GpuInfo;
 use crate::llm::PostProcessor;
-use crate::log_sink::LogReceiver;
+use crate::log_sink::{LogBuffer, LogReceiver};
 use crate::models::{BenchmarkResult, DownloadProgress};
 use crate::pipeline::state::PipelineState;
 use crate::pipeline::transcript::{TranscriptEntry, TranscriptStore};
@@ -88,13 +89,28 @@ pub struct ModelRuntimeInfo {
     pub custom_path: Option<PathBuf>,
 }
 
-/// Central application state accessible via GPUI's Global trait.
+/// A completed transcript event for broadcasting to diagnostics subscribers.
 ///
-/// Holds all runtime state: user settings, transcript store, application
-/// readiness, pipeline state, async runtime, and data directory path.
-/// Created once during app initialization and set as a GPUI Global for
-/// `cx.global::<VoxState>()` access.
-pub struct VoxState {
+/// Sent over the transcript broadcast channel when a pipeline segment
+/// finishes processing and text injection completes.
+#[derive(Clone, Debug)]
+pub struct TranscriptEvent {
+    /// ISO 8601 timestamp when the transcript was produced.
+    pub timestamp: String,
+    /// Raw ASR output before LLM post-processing.
+    pub raw: String,
+    /// Final polished text after LLM post-processing.
+    pub polished: String,
+    /// End-to-end latency from audio capture to injection, in milliseconds.
+    pub latency_ms: u64,
+}
+
+/// Inner storage for all Vox runtime state fields.
+///
+/// External code interacts through [`VoxState`] which wraps this in an `Arc`
+/// for thread-safe sharing with background threads (e.g., the diagnostics
+/// listener). All fields are private — access is through methods only.
+pub struct VoxStateInner {
     /// User settings, protected by RwLock for concurrent read access.
     settings: RwLock<Settings>,
     /// Shared transcript store (also used by pipeline orchestrator).
@@ -130,18 +146,27 @@ pub struct VoxState {
     gpu_info: RwLock<Option<GpuInfo>>,
     /// Debug audio tap for recording pipeline audio to WAV files.
     debug_tap: Arc<DebugAudioTap>,
+    /// Thread-safe log buffer for diagnostics access outside GPUI.
+    log_buffer: Arc<LogBuffer>,
+    /// Sender half of the diagnostics command channel (cloned per connection handler).
+    diagnostics_cmd_tx: parking_lot::Mutex<Option<std::sync::mpsc::Sender<DiagnosticsCommand>>>,
+    /// Receiver half of the diagnostics command channel (taken once by GPUI poll timer).
+    diagnostics_cmd_rx: parking_lot::Mutex<Option<std::sync::mpsc::Receiver<DiagnosticsCommand>>>,
+    /// Broadcast channel for pipeline state transitions (diagnostics subscribe).
+    state_broadcast: tokio::sync::broadcast::Sender<PipelineState>,
+    /// Broadcast channel for completed transcript events (diagnostics subscribe).
+    transcript_broadcast: tokio::sync::broadcast::Sender<TranscriptEvent>,
+    /// Whether a recording session is currently active (set from GPUI thread).
+    is_recording: AtomicBool,
+    /// Active audio capture device name (set when recording starts, cleared on stop).
+    audio_device_name: RwLock<Option<String>>,
+    /// Active audio capture sample rate (set when recording starts, cleared on stop).
+    audio_sample_rate: RwLock<Option<u32>>,
 }
 
-impl gpui::Global for VoxState {}
-
-impl VoxState {
-    /// Create and initialize VoxState from a data directory path.
-    ///
-    /// Creates the data directory if it doesn't exist, loads or creates
-    /// settings, initializes the SQLite database with schema, and starts
-    /// the tokio runtime. Initial readiness is `AppReadiness::Downloading`
-    /// with all models pending.
-    pub fn new(data_dir: &Path) -> Result<Self> {
+impl VoxStateInner {
+    /// Create the inner state from a data directory path.
+    fn new(data_dir: &Path, log_buffer: Arc<LogBuffer>) -> Result<Self> {
         std::fs::create_dir_all(data_dir)
             .with_context(|| format!("failed to create data directory at {}", data_dir.display()))?;
 
@@ -172,6 +197,10 @@ impl VoxState {
             settings.debug_audio,
         ));
 
+        let (diagnostics_cmd_tx, diagnostics_cmd_rx) = std::sync::mpsc::channel();
+        let (state_broadcast, _) = tokio::sync::broadcast::channel(64);
+        let (transcript_broadcast, _) = tokio::sync::broadcast::channel(16);
+
         Ok(Self {
             settings: RwLock::new(settings),
             transcript_store,
@@ -190,6 +219,14 @@ impl VoxState {
             hotkey_rebind_tx: parking_lot::Mutex::new(None),
             gpu_info: RwLock::new(None),
             debug_tap,
+            log_buffer,
+            diagnostics_cmd_tx: parking_lot::Mutex::new(Some(diagnostics_cmd_tx)),
+            diagnostics_cmd_rx: parking_lot::Mutex::new(Some(diagnostics_cmd_rx)),
+            state_broadcast,
+            transcript_broadcast,
+            is_recording: AtomicBool::new(false),
+            audio_device_name: RwLock::new(None),
+            audio_sample_rate: RwLock::new(None),
         })
     }
 
@@ -279,8 +316,9 @@ impl VoxState {
         self.pipeline_state.read().clone()
     }
 
-    /// Update pipeline state.
+    /// Update pipeline state and broadcast to diagnostics subscribers.
     pub fn set_pipeline_state(&self, state: PipelineState) {
+        self.send_state_broadcast(state.clone());
         *self.pipeline_state.write() = state;
     }
 
@@ -453,6 +491,96 @@ impl VoxState {
         &self.debug_tap
     }
 
+    // --- Diagnostics ---
+
+    /// Get a shared reference to the log buffer for diagnostics access.
+    pub fn log_buffer(&self) -> &Arc<LogBuffer> {
+        &self.log_buffer
+    }
+
+    /// Clone the diagnostics command sender for a connection handler thread.
+    ///
+    /// Returns `None` if the sender was never initialized (shouldn't happen).
+    pub fn diagnostics_cmd_sender(&self) -> Option<std::sync::mpsc::Sender<DiagnosticsCommand>> {
+        self.diagnostics_cmd_tx.lock().clone()
+    }
+
+    /// Take the diagnostics command receiver (consumed once by the GPUI poll timer).
+    ///
+    /// Returns `None` on subsequent calls — the receiver can only be taken once.
+    pub fn take_diagnostics_cmd_rx(&self) -> Option<std::sync::mpsc::Receiver<DiagnosticsCommand>> {
+        self.diagnostics_cmd_rx.lock().take()
+    }
+
+    /// Subscribe to pipeline state broadcast events.
+    ///
+    /// Each call returns an independent receiver. Used by diagnostics
+    /// connection handlers to stream state changes to UDS clients.
+    pub fn state_broadcast_subscribe(&self) -> tokio::sync::broadcast::Receiver<PipelineState> {
+        self.state_broadcast.subscribe()
+    }
+
+    /// Broadcast a pipeline state transition to all diagnostics subscribers.
+    ///
+    /// Silently drops the event if no subscribers are connected.
+    pub fn send_state_broadcast(&self, state: PipelineState) {
+        let _ = self.state_broadcast.send(state);
+    }
+
+    /// Subscribe to transcript broadcast events.
+    ///
+    /// Each call returns an independent receiver. Used by diagnostics
+    /// connection handlers to stream completed transcripts to UDS clients.
+    pub fn transcript_broadcast_subscribe(&self) -> tokio::sync::broadcast::Receiver<TranscriptEvent> {
+        self.transcript_broadcast.subscribe()
+    }
+
+    /// Broadcast a completed transcript event to all diagnostics subscribers.
+    ///
+    /// Silently drops the event if no subscribers are connected.
+    pub fn send_transcript_broadcast(&self, event: TranscriptEvent) {
+        let _ = self.transcript_broadcast.send(event);
+    }
+
+    /// Get a clone of the transcript broadcast sender.
+    ///
+    /// Used to pass the sender to the pipeline orchestrator so it can
+    /// broadcast transcript events directly after processing completes.
+    pub fn transcript_broadcast_sender(&self) -> tokio::sync::broadcast::Sender<TranscriptEvent> {
+        self.transcript_broadcast.clone()
+    }
+
+    /// Get a shared reference to the transcript store for diagnostics queries.
+    pub fn transcript_store(&self) -> &Arc<TranscriptStore> {
+        &self.transcript_store
+    }
+
+    /// Whether a recording session is currently active.
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::Acquire)
+    }
+
+    /// Set the recording status flag.
+    pub fn set_recording(&self, recording: bool) {
+        self.is_recording.store(recording, Ordering::Release);
+    }
+
+    /// Get the active audio capture device name.
+    pub fn audio_device_name(&self) -> Option<String> {
+        self.audio_device_name.read().clone()
+    }
+
+    /// Set the active audio capture device name and sample rate.
+    pub fn set_audio_device(&self, name: Option<String>, sample_rate: Option<u32>) {
+        *self.audio_device_name.write() = name;
+        *self.audio_sample_rate.write() = sample_rate;
+    }
+
+    /// Get the active audio capture sample rate.
+    pub fn audio_sample_rate(&self) -> Option<u32> {
+        *self.audio_sample_rate.read()
+    }
+
     /// Create a transcript writer for pipeline use.
     ///
     /// The writer enforces the `save_history` privacy setting on all writes.
@@ -463,6 +591,43 @@ impl VoxState {
             Arc::clone(&self.transcript_store),
             Arc::clone(&self.save_history),
         )
+    }
+}
+
+/// Central application state accessible via GPUI's Global trait.
+///
+/// A thin `Arc`-based wrapper around [`VoxStateInner`] that enables
+/// thread-safe sharing with background threads (e.g., the diagnostics
+/// listener). Cheaply cloneable — each clone increments the reference count.
+///
+/// All runtime state is accessed through `Deref` to `VoxStateInner`.
+/// Created once during app initialization and set as a GPUI Global for
+/// `cx.global::<VoxState>()` access.
+#[derive(Clone)]
+pub struct VoxState(Arc<VoxStateInner>);
+
+impl gpui::Global for VoxState {}
+
+impl std::ops::Deref for VoxState {
+    type Target = VoxStateInner;
+    fn deref(&self) -> &VoxStateInner {
+        &self.0
+    }
+}
+
+impl VoxState {
+    /// Create and initialize VoxState from a data directory path.
+    ///
+    /// Creates the data directory if it doesn't exist, loads or creates
+    /// settings, initializes the SQLite database with schema, and starts
+    /// the tokio runtime. Initial readiness is `AppReadiness::Downloading`
+    /// with all models pending.
+    ///
+    /// The `log_buffer` parameter receives a shared log buffer that is also
+    /// fed by the tracing subscriber. Pass the same `Arc<LogBuffer>` that
+    /// was given to [`crate::logging::init_logging`].
+    pub fn new(data_dir: &Path, log_buffer: Arc<LogBuffer>) -> Result<Self> {
+        Ok(Self(Arc::new(VoxStateInner::new(data_dir, log_buffer)?)))
     }
 }
 
@@ -559,7 +724,7 @@ mod tests {
     #[test]
     fn test_vox_state_init() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new should succeed");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new should succeed");
 
         // Settings file should be created with defaults on first launch
         let settings_path = dir.path().join("settings.json");
@@ -621,7 +786,7 @@ mod tests {
         settings.save(dir.path()).expect("save settings");
 
         // Create VoxState — it should load existing settings
-        let state = VoxState::new(dir.path()).expect("VoxState::new should succeed");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new should succeed");
         assert_eq!(state.settings().language, "de");
     }
 
@@ -659,7 +824,7 @@ mod tests {
     #[test]
     fn test_app_readiness_transitions() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         // Start: Downloading
         assert!(matches!(state.readiness(), AppReadiness::Downloading { .. }));
@@ -683,7 +848,7 @@ mod tests {
     #[test]
     fn test_pipeline_state_transitions() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         assert_eq!(state.pipeline_state(), PipelineState::Idle);
 
@@ -713,7 +878,7 @@ mod tests {
     #[test]
     fn test_update_settings() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         state
             .update_settings(|s| {
@@ -735,7 +900,7 @@ mod tests {
     #[test]
     fn test_settings_persistence_noise_gate() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         // Default noise_gate is 0.0
         assert_eq!(state.settings().noise_gate, 0.0);
@@ -762,7 +927,7 @@ mod tests {
     #[test]
     fn test_save_history_disabled() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         // Disable save_history
         state
@@ -792,7 +957,7 @@ mod tests {
     #[test]
     fn test_clear_history_vacuum() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let state = VoxState::new(dir.path()).expect("VoxState::new");
+        let state = VoxState::new(dir.path(), Arc::new(LogBuffer::new())).expect("VoxState::new");
 
         // Save some transcripts
         for i in 0..5 {

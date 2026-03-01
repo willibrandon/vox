@@ -42,6 +42,7 @@ pub struct Pipeline {
     command_rx: mpsc::Receiver<PipelineCommand>,
     stop_flag: Arc<AtomicBool>,
     debug_tap: Arc<DebugAudioTap>,
+    transcript_tx: Option<broadcast::Sender<crate::state::TranscriptEvent>>,
     segment_rx: Option<mpsc::Receiver<(Vec<f32>, u32)>>,
     vad_handle: Option<JoinHandle<Result<()>>>,
     vad_model_path: PathBuf,
@@ -83,6 +84,7 @@ impl Pipeline {
         vad_model_path: PathBuf,
         vad_config: VadConfig,
         debug_tap: Arc<DebugAudioTap>,
+        transcript_tx: Option<broadcast::Sender<crate::state::TranscriptEvent>>,
     ) -> Self {
         Self {
             asr,
@@ -93,6 +95,7 @@ impl Pipeline {
             command_rx,
             stop_flag: Arc::new(AtomicBool::new(false)),
             debug_tap,
+            transcript_tx,
             segment_rx: None,
             vad_handle: None,
             vad_model_path,
@@ -538,6 +541,16 @@ impl Pipeline {
             tracing::warn!("failed to save transcript: {error}");
         }
 
+        // Broadcast transcript to diagnostics subscribers (independent of save_history)
+        if let Some(ref tx) = self.transcript_tx {
+            let _ = tx.send(crate::state::TranscriptEvent {
+                timestamp: entry.created_at.clone(),
+                raw: entry.raw_text.clone(),
+                polished: entry.polished_text.clone(),
+                latency_ms: u64::from(latency_ms),
+            });
+        }
+
         self.broadcast(PipelineState::Listening);
         Ok(())
     }
@@ -816,6 +829,7 @@ mod tests {
             vad_model_path,
             vad_config,
             debug_tap,
+            None,
         );
 
         (pipeline, state_rx, dir)

@@ -55,6 +55,16 @@ cargo test -p vox_core test_name --features cuda -- --nocapture
 
 # Release build
 cargo build --release -p vox --features vox_core/cuda
+
+# CLI & MCP tools
+cargo build -p vox_tool -p vox_mcp            # Build diagnostics tools
+vox-tool launch                               # Start Vox in background
+vox-tool list                                 # List running Vox instances
+vox-tool status                               # Pipeline state, GPU, models
+vox-tool settings                             # Read all settings
+vox-tool logs -n 20 --level warn              # Recent log entries
+vox-tool quit                                 # Shut down Vox
+vox-mcp                                       # Start MCP server (stdio)
 ```
 
 Zero warnings required. `#[allow(...)]` only with justifying comment.
@@ -70,11 +80,14 @@ Zero warnings required. `#[allow(...)]` only with justifying comment.
 
 ## Architecture
 
-Three-crate workspace:
+Six-crate workspace:
 
 - **`crates/vox/`** — Binary entry point. GPUI Application, window setup, system tray (`tray-icon`), global hotkeys (`global-hotkey`).
-- **`crates/vox_core/`** — Backend. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, settings, model download. Feature-gated: `cuda` and `metal`.
+- **`crates/vox_core/`** — Backend. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, settings, model download. Feature-gated: `cuda` and `metal`. Hosts diagnostics listener (UDS socket server).
 - **`crates/vox_ui/`** — GPUI UI components. Overlay HUD, settings panel, history, dictionary editor, model manager, log viewer.
+- **`crates/vox_diag/`** — Diagnostics protocol library. Shared types (`Request`, `Response`, `Event`), cross-platform UDS client, socket discovery. Used by both `vox_tool` and `vox_mcp`.
+- **`crates/vox_tool/`** — CLI binary (`vox-tool`). Connects to a running Vox instance via diagnostics socket. Commands: status, settings, logs, record, inject, screenshot, subscribe, transcripts.
+- **`crates/vox_mcp/`** — MCP server binary (`vox-mcp`). Exposes Vox diagnostics as MCP tools for AI assistants via stdio transport. Fresh connection per tool call.
 
 GPUI patterns (from Zed): `Entity<T>` for state, `Render` trait for views, `cx.set_global()` for app-wide state, `div()` builder API, `Action` trait for keybindings.
 
@@ -144,6 +157,7 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 
 ## Recent Changes
 
+- 017-diagnostics-cli-mcp: Diagnostics socket server in vox_core (UDS at `~/.vox/sockets/{pid}.diagnostics.socket`), vox_diag shared protocol library (Request/Response/Event types, cross-platform UDS client with auto-discovery), vox-tool CLI (8 subcommands: status, settings, logs, record, inject, screenshot, subscribe, transcripts), vox-mcp MCP server (11 tools via rmcp 0.17.0 stdio transport, fresh connection per call, vox_launch/vox_quit lifecycle). Handlers: status (pipeline state, GPU, models, audio, latency), settings get/set, log retrieval from SharedLogStore, record start/stop, WAV audio injection through pipeline, window screenshot as base64 PNG, live event subscription (pipeline_state, audio_rms, transcript), transcript history. Packaging updated to include all 3 binaries in Windows MSI and macOS .app bundle.
 - 016-audio-debug-tap: DebugAudioTap module with 4 pipeline tap points (raw capture, post-resample, VAD segment, ASR input). Bounded std::sync::mpsc(256) channel with try_send to background writer thread — never blocks audio pipeline. Three-level DebugAudioLevel setting (Off/Segments/Full) in config with settings panel dropdown. Streaming WAV taps (raw/resample) use single open hound::WavWriter per session, gated to Full level. Per-segment taps (vad/asr) create one WAV per utterance, correlated by session_id and segment_index. Segment channel type changed from Vec<f32> to (Vec<f32>, u32) across VAD and orchestrator for segment index correlation. Storage management: 500 MB cap with 20% hysteresis (delete to 400 MB), 24h auto-cleanup by creation time, in-memory cumulative_bytes with periodic rescan every 50 writes. Write failures broadcast PipelineState::Error to overlay via shared Arc<Mutex<Option<broadcast::Sender>>>. AtomicU8 level for lock-free hot-path checks, AtomicBool write_error flag, AtomicU64 drop counter. Select dropdown z-ordering fix: deferred() with occlude() and priority(1). 9 unit tests.
 - 015-error-logging-packaging: Typed error taxonomy (VoxError 8 variants → RecoveryAction 7 variants → execute_recovery() dispatcher). Self-healing pipeline: retry_once() generic async retry wrapper, segment discard on second failure, injection focus retry (500ms poll, 30s timeout). Audio device recovery: health_check() + switch_to_default() + 2s polling loop with permission detection. System sleep/wake resilience: platform wake listeners (Windows WM_POWERBROADCAST, macOS IOKit), wake recovery handler (audio + GPU + hotkey re-registration). Structured diagnostic logging: SizeLimitedWriter (10 MB file cap with daily reset, silent discard), per-stage tracing spans (pipeline_segment, asr_transcribe, llm_process, text_inject with timing fields), recovery_attempt spans. SHA-256 model integrity verification at startup with corrupt model re-download. Read-only file permissions after download. GPU detection at startup (Windows DXGI, macOS sysctl) with actionable error guidance. macOS permission polling (Accessibility via AXIsProcessTrusted every 2s, Input Monitoring via hotkey registration retry every 2s, auto-proceed on grant). Distributable packaging scripts (Windows WiX MSI, macOS .app bundle + DMG). Overlay guidance patterns for permissions, GPU, audio device errors.
 - 014-tray-hotkeys: HotkeyInterpreter state machine with three activation modes (hold-to-talk, toggle with press tracking, hands-free with 300ms double-press detection). Dynamic tray icon across 5 states (idle/listening/processing/downloading/error) with tooltip updates. 6-item tray context menu with dynamic "Start/Stop Recording" label keyed off RecordingSession activity (not visual state). Hotkey remapping at runtime via cross-crate `Mutex<Sender<String>>` channel (vox_ui settings panel → vox hotkey loop re-registration). Universal hotkey response in non-ready states (FR-006: overlay shows download/loading/error feedback, never silent). Reactive tray sync via `observe_global::<OverlayDisplayState>()` centralizing all state-to-tray updates. ToggleOverlay action with Win32 `ShowWindow` FFI for OS-level hide/show plus render gating. `OverlayWindowHandle` global for cross-crate overlay window access. Default hotkey: Ctrl+Shift+Space.

@@ -21,21 +21,35 @@ APP_BUNDLE="$OUTPUT_DIR/Vox.app"
 
 echo "=== Vox .app Bundle Builder ==="
 
-# Step 1: Build release binary
+# Step 1: Build release binaries
 echo ""
-echo "[1/4] Building release binary..."
+echo "[1/4] Building release binaries..."
 cd "$REPO_ROOT"
 cargo build --release -p vox --features vox_core/metal
+cargo build --release -p vox_tool -p vox_mcp
 
 BINARY="$REPO_ROOT/target/release/vox"
-if [ ! -f "$BINARY" ]; then
-    echo "ERROR: Release binary not found at $BINARY"
-    exit 1
-fi
+TOOL_BINARY="$REPO_ROOT/target/release/vox-tool"
+MCP_BINARY="$REPO_ROOT/target/release/vox-mcp"
+
+for bin in "$BINARY" "$TOOL_BINARY" "$MCP_BINARY"; do
+    if [ ! -f "$bin" ]; then
+        echo "ERROR: Release binary not found at $bin"
+        exit 1
+    fi
+done
 
 BINARY_SIZE=$(stat -f%z "$BINARY" 2>/dev/null || stat -c%s "$BINARY")
 BINARY_SIZE_MB=$(echo "scale=2; $BINARY_SIZE / 1048576" | bc)
-echo "  Binary size: ${BINARY_SIZE_MB} MB"
+echo "  vox:      ${BINARY_SIZE_MB} MB"
+
+TOOL_SIZE=$(stat -f%z "$TOOL_BINARY" 2>/dev/null || stat -c%s "$TOOL_BINARY")
+TOOL_SIZE_MB=$(echo "scale=2; $TOOL_SIZE / 1048576" | bc)
+echo "  vox-tool: ${TOOL_SIZE_MB} MB"
+
+MCP_SIZE=$(stat -f%z "$MCP_BINARY" 2>/dev/null || stat -c%s "$MCP_BINARY")
+MCP_SIZE_MB=$(echo "scale=2; $MCP_SIZE / 1048576" | bc)
+echo "  vox-mcp:  ${MCP_SIZE_MB} MB"
 
 # Step 2: Create .app bundle structure
 echo ""
@@ -48,8 +62,10 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 echo ""
 echo "[3/4] Populating bundle..."
 
-# Copy binary
+# Copy binaries
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/vox"
+cp "$TOOL_BINARY" "$APP_BUNDLE/Contents/MacOS/vox-tool"
+cp "$MCP_BINARY" "$APP_BUNDLE/Contents/MacOS/vox-mcp"
 
 # Copy Info.plist
 cp "$SCRIPT_DIR/Info.plist" "$APP_BUNDLE/Contents/"
@@ -89,8 +105,10 @@ codesign --force --sign "$IDENTITY" \
 
 echo ""
 echo "=== Build Complete ==="
-echo "  Binary: ${BINARY_SIZE_MB} MB"
-echo "  Bundle: $APP_BUNDLE"
+echo "  vox:      ${BINARY_SIZE_MB} MB"
+echo "  vox-tool: ${TOOL_SIZE_MB} MB"
+echo "  vox-mcp:  ${MCP_SIZE_MB} MB"
+echo "  Bundle:   $APP_BUNDLE"
 echo ""
 echo "To test: open $APP_BUNDLE"
 echo "To create DMG: ./packaging/macos/build-dmg.sh"

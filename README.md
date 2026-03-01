@@ -30,7 +30,8 @@ Alpha — nearing daily-driver use. Full voice dictation pipeline runs end-to-en
 - **Security & model integrity** — SHA-256 verification of all models at startup, corrupt model re-download, read-only file permissions after download, no audio written to disk by default (opt-in debug audio tap with auto-cleanup), zero network after model download
 - **macOS permissions** — Accessibility and Input Monitoring permission polling (2s interval), auto-proceed on grant without restart, overlay guidance with exact System Settings paths
 - **Audio debug tap** — WAV recording at 4 pipeline stages (raw capture, post-resample, VAD segment, ASR input) for diagnosing audio quality, VAD boundaries, and resampling artifacts. Three-level setting (Off/Segments/Full), bounded channel with backpressure drop, 500 MB storage cap with 24h auto-cleanup, session/segment correlation across tap files
-- **Packaging** — Windows MSI installer (WiX v4), macOS .app bundle with DMG, platform-standard data directories, zero-click first launch
+- **Diagnostics & tooling** — Unix domain socket server exposing pipeline state, settings, logs, transcripts, audio injection, and screenshot capture. CLI tool (`vox-tool`) with 8 subcommands for scripting and debugging. MCP server (`vox-mcp`) exposing 11 tools for AI assistant integration via stdio transport
+- **Packaging** — Windows MSI installer (WiX v4), macOS .app bundle with DMG, platform-standard data directories, zero-click first launch. All three binaries (vox, vox-tool, vox-mcp) included
 
 ## Prerequisites
 
@@ -75,9 +76,12 @@ cargo build --release -p vox --features vox_core/cuda
 ```
 assets/icons/   Icon assets
 crates/
-  vox/          Binary entry point
-  vox_core/     Backend — audio, VAD, ASR, LLM, text injection (13 modules)
-  vox_ui/       GPUI UI components — overlay, panels, controls (14 modules)
+  vox/          Binary entry point — GPUI app shell, tray, hotkeys
+  vox_core/     Backend — audio, VAD, ASR, LLM, text injection, diagnostics server
+  vox_ui/       GPUI UI components — overlay, panels, controls
+  vox_diag/     Diagnostics protocol library — shared types, UDS client, socket discovery
+  vox_tool/     CLI tool (vox-tool) — 8 subcommands for inspecting/controlling Vox
+  vox_mcp/      MCP server (vox-mcp) — 11 tools for AI assistant integration
 packaging/
   windows/      WiX MSI installer (main.wxs, build-msi.ps1)
   macos/        .app bundle and DMG scripts (Info.plist, entitlements, build scripts)
@@ -88,11 +92,57 @@ specs/          Feature specifications
 
 ## Architecture
 
-Three-crate Cargo workspace:
+Six-crate Cargo workspace:
 
 - **vox** — Binary. GPUI application shell, window setup, system tray, global hotkeys.
-- **vox_core** — Library. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, config, state, model management. Feature-gated for `cuda` and `metal`.
+- **vox_core** — Library. Audio pipeline, VAD, ASR, LLM, text injection, dictionary, config, state, model management, diagnostics socket server. Feature-gated for `cuda` and `metal`.
 - **vox_ui** — Library. GPUI UI components. Overlay HUD, settings, history, dictionary editor, model manager, log viewer.
+- **vox_diag** — Library. Diagnostics protocol (Request/Response/Event types), cross-platform UDS client, socket auto-discovery.
+- **vox_tool** — Binary (`vox-tool`). CLI for inspecting and controlling a running Vox instance. Connects via diagnostics socket.
+- **vox_mcp** — Binary (`vox-mcp`). MCP server exposing Vox diagnostics as tools for AI assistants (Claude, etc.) via stdio transport.
+
+## Diagnostics Tools
+
+Vox exposes a diagnostics socket that `vox-tool` and `vox-mcp` connect to for inspecting and controlling a running instance.
+
+### CLI (`vox-tool`)
+
+```bash
+vox-tool launch                          # Start Vox in the background
+vox-tool list                            # List all running Vox instances
+vox-tool status                          # Pipeline state, GPU, models, audio, latency
+vox-tool settings                        # Read all settings
+vox-tool settings get vad_threshold      # Read one setting
+vox-tool settings set vad_threshold 0.4  # Write a setting
+vox-tool logs -n 20 --level warn         # Recent log entries
+vox-tool transcripts -n 5               # Recent transcripts
+vox-tool record start                    # Start recording
+vox-tool record stop                     # Stop recording
+vox-tool inject path/to/audio.wav        # Inject WAV into pipeline
+vox-tool screenshot --output shot.png    # Capture overlay window
+vox-tool subscribe --events transcript   # Live event stream (Ctrl+C to stop)
+vox-tool quit                            # Shut down Vox gracefully
+vox-tool quit --pid 12345                # Shut down a specific instance
+```
+
+Use `--pid <PID>` to target a specific instance when multiple are running.
+
+### MCP Server (`vox-mcp`)
+
+Add to your MCP client configuration (e.g., Claude Code `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "vox": {
+      "command": "vox-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Exposes 12 tools: `vox_status`, `vox_settings_get`, `vox_settings_set`, `vox_logs`, `vox_record_start`, `vox_record_stop`, `vox_inject_audio`, `vox_screenshot`, `vox_transcripts`, `vox_launch`, `vox_quit`, `vox_list`.
 
 ## Data Directories
 
@@ -172,7 +222,7 @@ Build the installer:
 .\packaging\windows\build-msi.ps1
 ```
 
-This builds a release binary, compiles the WiX source, and produces `packaging/windows/output/vox.msi`. The MSI installs to `Program Files\Vox` with a Start Menu shortcut and Add/Remove Programs entry. Models are not bundled — they download on first launch.
+This builds release binaries for all three executables (vox, vox-tool, vox-mcp), compiles the WiX source, and produces `packaging/windows/output/vox.msi`. The MSI installs to `Program Files\Vox` with a Start Menu shortcut and Add/Remove Programs entry. Models are not bundled — they download on first launch.
 
 ### macOS — DMG
 
@@ -182,7 +232,7 @@ Build the .app bundle, then wrap it in a DMG:
 ./packaging/macos/build-dmg.sh
 ```
 
-The app bundle is ad-hoc signed with entitlements for microphone access and Apple Events. Output: `packaging/macos/output/Vox.dmg`. Drag `Vox.app` to Applications to install.
+This builds all three executables (vox, vox-tool, vox-mcp) and bundles them into `Vox.app/Contents/MacOS/`. The app bundle is ad-hoc signed with entitlements for microphone access and Apple Events. Output: `packaging/macos/output/Vox.dmg`. Drag `Vox.app` to Applications to install.
 
 ## Target Hardware
 

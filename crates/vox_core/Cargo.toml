@@ -40,6 +40,12 @@ encoding_rs = "0.8"
 # WAV I/O (debug audio tap)
 hound = "3.5"
 
+# Diagnostics
+vox_diag = { path = "../vox_diag" }
+base64.workspace = true
+png = "0.17"
+raw-window-handle = "0.6"
+
 # Storage & networking
 rusqlite = { version = "0.38", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["stream"] }
@@ -61,6 +67,7 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
     "Win32_System_Power",
 ] }
 

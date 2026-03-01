@@ -210,7 +210,59 @@ impl Default for Settings {
     }
 }
 
+/// Expected value type for a settings field, used for type validation on set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingType {
+    /// Floating-point number (f32/f64).
+    Float,
+    /// Unsigned integer (u32/u64).
+    Integer,
+    /// Boolean true/false.
+    Bool,
+    /// String or enum serialized as string.
+    String,
+}
+
 impl Settings {
+    /// Return the expected type for a settings field by its JSON key name.
+    ///
+    /// Returns `None` for unknown keys. Covers all user-facing settings
+    /// but not internal window-position fields.
+    pub fn field_type(key: &str) -> Option<SettingType> {
+        match key {
+            "vad_threshold" | "noise_gate" | "temperature" | "overlay_opacity" => {
+                Some(SettingType::Float)
+            }
+            "min_silence_ms" | "min_speech_ms" | "max_segment_ms" | "overlap_ms" => {
+                Some(SettingType::Integer)
+            }
+            "remove_fillers" | "course_correction" | "punctuation" | "show_raw_transcript"
+            | "save_history" => Some(SettingType::Bool),
+            "language" | "whisper_model" | "llm_model" | "activation_hotkey"
+            | "activation_mode" | "command_prefix" | "debug_audio" | "input_device" => {
+                Some(SettingType::String)
+            }
+            _ => None,
+        }
+    }
+
+    /// Set a single field by key name using serde round-trip.
+    ///
+    /// Serializes self to a JSON map, inserts/replaces the key, and
+    /// deserializes back. Returns an error if the resulting JSON is
+    /// invalid for the Settings struct (type mismatch, unknown enum variant).
+    pub fn set_field(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
+        let mut map = serde_json::to_value(&*self)
+            .context("failed to serialize current settings")?;
+        let obj = map
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("settings did not serialize as object"))?;
+        obj.insert(key.to_string(), value);
+        *self = serde_json::from_value(map)
+            .context("failed to deserialize after setting field")?;
+        Ok(())
+    }
+
     /// Load settings from the data directory.
     ///
     /// Returns defaults if file doesn't exist. Logs a warning and returns

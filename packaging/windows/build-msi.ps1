@@ -19,26 +19,41 @@ $WixDir = "$PSScriptRoot\wix"
 
 Write-Host "=== Vox MSI Builder ===" -ForegroundColor Cyan
 
-# Step 1: Build release binary
-Write-Host "`n[1/4] Building release binary..." -ForegroundColor Yellow
+# Step 1: Build release binaries
+Write-Host "`n[1/4] Building release binaries..." -ForegroundColor Yellow
 Push-Location $RepoRoot
 try {
     cargo build --release -p vox --features vox_core/cuda
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build failed with exit code $LASTEXITCODE"
+        throw "cargo build for vox failed with exit code $LASTEXITCODE"
+    }
+    cargo build --release -p vox_tool -p vox_mcp
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build for vox-tool/vox-mcp failed with exit code $LASTEXITCODE"
     }
 } finally {
     Pop-Location
 }
 
 $BinaryPath = "$RepoRoot\target\release\vox.exe"
-if (-not (Test-Path $BinaryPath)) {
-    throw "Release binary not found at $BinaryPath"
+$ToolPath = "$RepoRoot\target\release\vox-tool.exe"
+$McpPath = "$RepoRoot\target\release\vox-mcp.exe"
+
+foreach ($bin in @($BinaryPath, $ToolPath, $McpPath)) {
+    if (-not (Test-Path $bin)) {
+        throw "Release binary not found at $bin"
+    }
 }
 
 $BinarySize = (Get-Item $BinaryPath).Length
 $BinarySizeMB = [math]::Round($BinarySize / 1MB, 2)
-Write-Host "  Binary size: $BinarySizeMB MB" -ForegroundColor Green
+Write-Host "  vox.exe:      $BinarySizeMB MB" -ForegroundColor Green
+
+$ToolSizeMB = [math]::Round((Get-Item $ToolPath).Length / 1MB, 2)
+Write-Host "  vox-tool.exe: $ToolSizeMB MB" -ForegroundColor Green
+
+$McpSizeMB = [math]::Round((Get-Item $McpPath).Length / 1MB, 2)
+Write-Host "  vox-mcp.exe:  $McpSizeMB MB" -ForegroundColor Green
 
 if ($BinarySizeMB -gt 15) {
     Write-Warning "Binary size $BinarySizeMB MB exceeds 15 MB budget (SC-007)"
@@ -58,6 +73,8 @@ $IconPath = "$RepoRoot\assets\icons\app-icon.ico"
 
 wix build $WxsPath `
     -d "BinaryPath=$BinaryPath" `
+    -d "ToolPath=$ToolPath" `
+    -d "McpPath=$McpPath" `
     -d "IconPath=$IconPath" `
     -o "$OutputDir\vox.msi"
 

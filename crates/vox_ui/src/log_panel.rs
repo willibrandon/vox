@@ -127,7 +127,7 @@ impl LogPanel {
         } else {
             // Fallback: no global set (shouldn't happen). Use dummy receiver.
             cx.new(|cx| {
-                let (_, receiver) = vox_core::log_sink::LogSink::new();
+                let (_, receiver) = vox_core::log_sink::LogSink::new(None);
                 LogStore::new(cx, receiver)
             })
         };

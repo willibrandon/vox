@@ -16,7 +16,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-use crate::log_sink::{LogReceiver, LogSink};
+use crate::log_sink::{LogBuffer, LogReceiver, LogSink};
 
 /// Guard that flushes pending log entries when dropped.
 ///
@@ -123,7 +123,7 @@ fn day_of_epoch() -> u32 {
 /// layer for routing events to the log panel, and cleans up logs older than 7
 /// days. Returns a guard (must be held for the application lifetime) and a
 /// [`LogReceiver`] to pass to `VoxState` for the log panel.
-pub fn init_logging() -> (LoggingGuard, LogReceiver) {
+pub fn init_logging(log_buffer: Option<Arc<LogBuffer>>) -> (LoggingGuard, LogReceiver) {
     let dir = log_dir();
     fs::create_dir_all(&dir).ok();
 
@@ -144,7 +144,7 @@ pub fn init_logging() -> (LoggingGuard, LogReceiver) {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(size_capped);
 
-    let (log_sink, log_receiver) = LogSink::new();
+    let (log_sink, log_receiver) = LogSink::new(log_buffer);
 
     tracing_subscriber::registry()
         .with(filter)

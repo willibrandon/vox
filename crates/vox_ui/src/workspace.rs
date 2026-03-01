@@ -29,6 +29,13 @@ fn window_handle_store() -> &'static Mutex<Option<WindowHandle<VoxWorkspace>>> {
     SETTINGS_WINDOW.get_or_init(|| Mutex::new(None))
 }
 
+/// Return the current settings window handle, if the window is open.
+///
+/// Used by the diagnostics screenshot handler to capture the settings window.
+pub fn settings_window_handle() -> Option<WindowHandle<VoxWorkspace>> {
+    *window_handle_store().lock()
+}
+
 /// Which panel is currently active in the workspace sidebar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Panel {

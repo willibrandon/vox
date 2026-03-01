@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/vox", "crates/vox_core", "crates/vox_ui"]
+members = ["crates/vox", "crates/vox_core", "crates/vox_ui", "crates/vox_diag", "crates/vox_tool", "crates/vox_mcp"]
 resolver = "2"
 
 [workspace.package]
@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
 
 # whisper-rs-sys and llama-cpp-sys-2 both statically bundle ggml with
 # CUDA. Without LTO the linker picks one copy's symbols arbitrarily,

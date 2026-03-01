@@ -105,7 +105,7 @@ pub enum ProcessorOutput {
 }
 
 /// A voice command detected by the LLM from the raw transcript.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct VoiceCommand {
     /// Command identifier (e.g., "delete_last", "undo", "newline").
     pub cmd: String,

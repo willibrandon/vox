@@ -13,6 +13,7 @@
 mod tray;
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::HotKey;
@@ -24,7 +25,9 @@ use tray_icon::TrayIconBuilder;
 
 use vox_core::asr::AsrEngine;
 use vox_core::audio::{AudioCapture, AudioConfig};
+use vox_core::diagnostics::listener::DiagnosticsListener;
 use vox_core::llm::PostProcessor;
+use vox_core::log_sink::LogBuffer;
 use vox_core::logging::init_logging;
 use vox_core::models::{self, check_missing_models, DownloadProgress, ModelDownloader};
 use vox_core::hotkey_interpreter::{HotkeyAction, HotkeyInterpreter};
@@ -88,9 +91,20 @@ struct AppSubscriptions(Vec<gpui::Subscription>);
 
 impl gpui::Global for AppSubscriptions {}
 
+/// Keeps the diagnostics UDS listener alive for the app's lifetime.
+///
+/// The listener thread runs until the process exits. Since the app uses
+/// `_exit()` for shutdown (skipping atexit handlers), the socket file
+/// persists — stale sockets are cleaned up on next startup.
+#[allow(dead_code)]
+struct DiagnosticsListenerHolder(Option<DiagnosticsListener>);
+
+impl gpui::Global for DiagnosticsListenerHolder {}
+
 
 fn main() {
-    let (_guard, log_receiver) = init_logging();
+    let log_buffer = Arc::new(LogBuffer::new());
+    let (_guard, log_receiver) = init_logging(Some(log_buffer.clone()));
 
     // GUI subsystem processes have no console, so ctrlc's SetConsoleCtrlHandler
     // never fires. AttachConsole re-attaches to the parent terminal (if any)
@@ -132,18 +146,40 @@ fn main() {
     ctrlc::set_handler(|| unsafe { libc::_exit(0) }).ok();
 
     Application::new().run(move |cx: &mut App| {
-        if let Err(err) = run_app(cx, log_receiver) {
+        if let Err(err) = run_app(cx, log_receiver, log_buffer) {
             tracing::error!(%err, "application startup failed");
             cx.quit();
         }
     });
 }
 
-fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyhow::Result<()> {
+fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver, log_buffer: Arc<LogBuffer>) -> anyhow::Result<()> {
     let data_dir = ensure_data_dirs()?;
-    let state = VoxState::new(&data_dir)?;
+    let state = VoxState::new(&data_dir, log_buffer)?;
     let initial_readiness = state.readiness();
     let initial_pipeline = state.pipeline_state();
+
+    // Start the diagnostics UDS listener before handing state to GPUI.
+    // VoxState is Clone (Arc-based), so this is a cheap reference count bump.
+    let diagnostics_listener = match vox_core::diagnostics::listener::default_socket_dir() {
+        Ok(socket_dir) => {
+            match DiagnosticsListener::start(state.clone(), &socket_dir) {
+                Ok(listener) => {
+                    tracing::info!(path = %socket_dir.display(), "diagnostics listener started");
+                    Some(listener)
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "failed to start diagnostics listener");
+                    None
+                }
+            }
+        }
+        Err(err) => {
+            tracing::warn!(%err, "failed to resolve diagnostics socket directory");
+            None
+        }
+    };
+
     cx.set_global(state);
     cx.set_global(VoxTheme::dark());
 
@@ -205,6 +241,99 @@ fn run_app(cx: &mut App, log_receiver: vox_core::log_sink::LogReceiver) -> anyho
 
     // Start system sleep/wake listener and recovery handler (US3).
     spawn_wake_handler(cx);
+
+    // Store the diagnostics listener so it lives for the app's lifetime.
+    cx.set_global(DiagnosticsListenerHolder(diagnostics_listener));
+
+    // Spawn 50ms GPUI poll timer for diagnostics command channel.
+    // Drains commands dispatched from diagnostics handler threads (record,
+    // screenshot, etc.). Actual command dispatch added in later phases.
+    if let Some(cmd_rx) = cx.global::<VoxState>().take_diagnostics_cmd_rx() {
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |cx| {
+            loop {
+                executor.timer(Duration::from_millis(50)).await;
+                match cmd_rx.try_recv() {
+                    Ok(cmd) => {
+                        match cmd {
+                            vox_core::diagnostics::listener::DiagnosticsCommand::StartRecording { reply } => {
+                                tracing::debug!("diagnostics: StartRecording command received");
+                                let result = cx.update(|cx| -> anyhow::Result<()> {
+                                    if cx.global::<VoxState>().is_recording() {
+                                        anyhow::bail!("already recording");
+                                    }
+                                    cx.dispatch_action(&ToggleRecording);
+                                    // dispatch_action runs the handler synchronously;
+                                    // verify recording actually started
+                                    if !cx.global::<VoxState>().is_recording() {
+                                        anyhow::bail!("recording failed to start (check logs for details)");
+                                    }
+                                    Ok(())
+                                });
+                                let _ = reply.send(result);
+                            }
+                            vox_core::diagnostics::listener::DiagnosticsCommand::StopRecording { reply } => {
+                                tracing::debug!("diagnostics: StopRecording command received");
+                                let was_recording = cx.update(|cx| {
+                                    let is_recording = cx.global::<VoxState>().is_recording();
+                                    if is_recording {
+                                        cx.dispatch_action(&ToggleRecording);
+                                    }
+                                    is_recording
+                                });
+                                let _ = reply.send(if was_recording {
+                                    Ok(())
+                                } else {
+                                    Err(anyhow::anyhow!("not recording"))
+                                });
+                            }
+                            vox_core::diagnostics::listener::DiagnosticsCommand::CaptureScreenshot { window, reply } => {
+                                tracing::debug!(%window, "diagnostics: CaptureScreenshot command received");
+                                let result = cx.update(|cx| -> anyhow::Result<Vec<u8>> {
+                                    match window.as_str() {
+                                        "overlay" => {
+                                            let handle = cx
+                                                .try_global::<vox_ui::overlay_hud::OverlayWindowHandle>()
+                                                .and_then(|h| h.0)
+                                                .ok_or_else(|| anyhow::anyhow!("overlay window not open"))?;
+                                            handle.update(cx, |_, win, _cx| {
+                                                vox_core::diagnostics::screenshot::capture_gpui_window(win)
+                                            })?
+                                        }
+                                        "settings" => {
+                                            let handle = vox_ui::workspace::settings_window_handle()
+                                                .ok_or_else(|| anyhow::anyhow!("settings window not open"))?;
+                                            handle.update(cx, |_, win, _cx| {
+                                                vox_core::diagnostics::screenshot::capture_gpui_window(win)
+                                            })?
+                                        }
+                                        other => {
+                                            anyhow::bail!("unknown window: {other}")
+                                        }
+                                    }
+                                });
+                                let _ = reply.send(result);
+                            }
+                            vox_core::diagnostics::listener::DiagnosticsCommand::Quit { reply } => {
+                                tracing::info!("diagnostics: Quit command received");
+                                let _ = reply.send(Ok(()));
+                                // Brief delay so the handler thread can write
+                                // the response to the UDS socket before exit
+                                executor.timer(Duration::from_millis(100)).await;
+                                cx.update(|_cx| unsafe { libc::_exit(0) });
+                            }
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        tracing::info!("diagnostics command channel disconnected");
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
 
     // Pipeline initialization runs in background; UI is already visible
     cx.spawn(async move |mut cx| {
@@ -339,6 +468,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
     debug_tap.set_state_tx(state_tx.clone());
 
     // Create pipeline with all components wired in
+    let transcript_tx = cx.global::<VoxState>().transcript_broadcast_sender();
     let mut pipeline = Pipeline::new(
         asr,
         llm,
@@ -349,6 +479,7 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
         vad_model_path,
         vad_config,
         debug_tap,
+        Some(transcript_tx),
     );
 
     // Start pipeline: spawns VAD thread, broadcasts Listening
@@ -370,8 +501,14 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
     let generation = cx.global::<RecordingSession>().generation.fetch_add(1, Ordering::Relaxed) + 1;
     *cx.global::<RecordingSession>().active.lock() = Some(ActiveRecording { command_tx });
 
-    // Update UI state to Listening
-    cx.global::<VoxState>().set_pipeline_state(PipelineState::Listening);
+    // Update recording status and audio device info for diagnostics
+    let state = cx.global::<VoxState>();
+    state.set_recording(true);
+    state.set_audio_device(
+        Some(capture.device_name().to_string()),
+        Some(native_rate),
+    );
+    state.set_pipeline_state(PipelineState::Listening);
     update_overlay_state(cx);
 
     // Spawn GPUI foreground task that:
@@ -417,14 +554,17 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
                         let is_idle = matches!(pipeline_state, PipelineState::Idle);
                         cx.update(|cx| {
                             if is_current_gen(cx) {
-                                cx.global::<VoxState>()
-                                    .set_pipeline_state(pipeline_state);
+                                let state = cx.global::<VoxState>();
+                                state.set_pipeline_state(pipeline_state);
                                 update_overlay_state(cx);
                             }
                         });
                         if is_idle {
                             cx.update(|cx| {
                                 if is_current_gen(cx) {
+                                    let state = cx.global::<VoxState>();
+                                    state.set_recording(false);
+                                    state.set_audio_device(None, None);
                                     cx.global::<RecordingSession>()
                                         .active
                                         .lock()
@@ -438,8 +578,10 @@ fn start_recording(cx: &mut App) -> anyhow::Result<()> {
                     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
                         cx.update(|cx| {
                             if is_current_gen(cx) {
-                                cx.global::<VoxState>()
-                                    .set_pipeline_state(PipelineState::Idle);
+                                let state = cx.global::<VoxState>();
+                                state.set_recording(false);
+                                state.set_audio_device(None, None);
+                                state.set_pipeline_state(PipelineState::Idle);
                                 cx.global::<RecordingSession>()
                                     .active
                                     .lock()

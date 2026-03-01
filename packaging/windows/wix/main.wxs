@@ -2,9 +2,10 @@
 <!--
   WiX v4 installer source for Vox.
 
-  Installs vox.exe to Program Files\Vox\ with a Start Menu shortcut
-  and Add/Remove Programs entry. Does NOT bundle models — they are
-  auto-downloaded on first launch (Constitution Principle V).
+  Installs vox.exe, vox-tool.exe, and vox-mcp.exe to Program Files\Vox\
+  with a Start Menu shortcut and Add/Remove Programs entry. Does NOT
+  bundle models — they are auto-downloaded on first launch (Constitution
+  Principle V).
 
   Build: see ../build-msi.ps1
 -->
@@ -30,6 +31,12 @@
       <Directory Id="INSTALLFOLDER" Name="Vox">
         <Component Id="VoxExecutable" Guid="B2F8D4E1-6C3A-4D9B-AE2F-4A7B8C9D0E1F">
           <File Id="VoxExe" Source="$(var.BinaryPath)" KeyPath="yes" />
+        </Component>
+        <Component Id="VoxToolExecutable" Guid="D4B0F6A3-8E5C-6F1D-CA4B-6C9D0E1F3B4C">
+          <File Id="VoxToolExe" Source="$(var.ToolPath)" KeyPath="yes" />
+        </Component>
+        <Component Id="VoxMcpExecutable" Guid="E5C1A7B4-9F6D-7A2E-DB5C-7D0E1F2A4C5D">
+          <File Id="VoxMcpExe" Source="$(var.McpPath)" KeyPath="yes" />
         </Component>
       </Directory>
     </StandardDirectory>
@@ -59,6 +66,8 @@
 
     <Feature Id="MainFeature" Title="Vox" Level="1">
       <ComponentRef Id="VoxExecutable" />
+      <ComponentRef Id="VoxToolExecutable" />
+      <ComponentRef Id="VoxMcpExecutable" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
   </Package>
