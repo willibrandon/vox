@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -80,10 +80,11 @@ GPUI patterns (from Zed): `Entity<T>` for state, `Render` trait for views, `cx.s
 
 ## Reference Repositories
 
-Two GPUI apps are cloned locally. Consult these before inventing new patterns.
+These repos are cloned locally. Consult them before inventing new patterns.
 
 - **Zed** (`D:\SRC\zed`) — The GPUI framework source (`crates/gpui/`). Authoritative reference for GPUI patterns: entity state, rendering, actions, window management.
 - **Tusk** (`D:\SRC\tusk`) — Native PostgreSQL client, Rust/GPUI. Same three-crate workspace architecture as Vox. Reference for practical GPUI app patterns: settings, multi-panel layouts, list views, OS integrations.
+- **MCP Rust SDK** (`D:\SRC\rust-sdk`) — Official Rust SDK for the Model Context Protocol (`rmcp` 0.17.0). Authoritative reference for MCP server implementation: `#[tool]`/`#[tool_router]`/`#[tool_handler]` macros, `ServerHandler` trait, stdio transport, tool schema generation. Used by `vox-mcp` (feature 017).
 
 ## Pinned Dependency Versions
 
@@ -138,6 +139,8 @@ Feature specs live in `specs/NNN-feature-name/`. Commands: `/speckit.specify` �
 - SQLite via rusqlite 0.38 (existing — transcripts, history deletion), JSON settings (existing — config.rs) (015-error-logging-packaging)
 - Rust 2024 edition (1.85+) + hound 3.5 (WAV I/O, promoted from dev-dependencies), std::sync::mpsc (bounded channel), tokio::sync::broadcast (error notification via PipelineState) (016-audio-debug-tap)
 - WAV files in `data_dir/debug_audio/` (e.g. `%LOCALAPPDATA%/com.vox.app/debug_audio/`). Creation-time-based cleanup. No database involvement. (016-audio-debug-tap)
+- Rust 2024 edition (1.85+) + `windows` 0.62 (UDS on Windows), `std::os::unix::net` (UDS on macOS), `serde`/`serde_json` (protocol), `clap` 4 (CLI), `rmcp` 0.17.0 (MCP server), `hound` 3.5 (WAV reading, already present), `base64` 0.22 (PCM encoding), `png` 0.17 (screenshot encoding, already present) (017-diagnostics-cli-mcp)
+- UDS socket files at `~/.vox/sockets/{pid}.diagnostics.socket`; reads existing SQLite (transcripts), JSON (settings), in-memory (logs, state) (017-diagnostics-cli-mcp)
 
 ## Recent Changes
 
