@@ -2,9 +2,9 @@
 # Download ML models and ONNX Runtime for Vox.
 # Usage: ./scripts/download-models.sh
 #
-# Downloads all required files to their expected locations with SHA-256
-# verification per Constitution Principle 1. Skips files that already
-# exist with correct checksums. Runs on both macOS and Linux.
+# Downloads all required files to their expected locations with
+# SHA-256 verification. Skips files that already exist with correct
+# checksums. Runs on both macOS and Linux.
 
 set -euo pipefail
 

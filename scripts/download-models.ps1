@@ -1,10 +1,9 @@
 # Download ML models and ONNX Runtime for Vox.
 # Usage: .\scripts\download-models.ps1
 #
-# Downloads all required files to their expected locations with SHA-256
-# verification per Constitution Principle 1. Skips files that already
-# exist with correct checksums. Windows-only (use download-models.sh
-# on macOS/Linux).
+# Downloads all required files to their expected locations with
+# SHA-256 verification. Skips files that already exist with correct
+# checksums. Windows-only (use download-models.sh on macOS/Linux).
 
 $ErrorActionPreference = 'Stop'
 
