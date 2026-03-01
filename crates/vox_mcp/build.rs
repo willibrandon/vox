@@ -1,7 +1,7 @@
-//! Build script for the Vox binary crate.
+//! Build script for the vox-mcp MCP server binary.
 //!
-//! On Windows, embeds the application icon into the executable via the
-//! Windows resource compiler so it appears in the taskbar and window title bar.
+//! On Windows, embeds the application icon into the executable so it
+//! appears in Explorer and the taskbar.
 
 fn main() {
     #[cfg(target_os = "windows")]
@@ -12,8 +12,8 @@ fn main() {
 
         let mut res = winresource::WindowsResource::new();
         res.set_icon("../../assets/icons/app-icon.ico");
-        res.set("FileDescription", "Vox");
-        res.set("ProductName", "Vox");
+        res.set("FileDescription", "Vox MCP Server");
+        res.set("ProductName", "Vox MCP Server");
         if let Err(err) = res.compile() {
             eprintln!("winresource failed: {err}");
         }

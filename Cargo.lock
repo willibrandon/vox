@@ -7721,6 +7721,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vox_diag",
+ "winresource",
 ]
 
 [[package]]
@@ -7733,6 +7734,7 @@ dependencies = [
  "dirs 5.0.1",
  "serde_json",
  "vox_diag",
+ "winresource",
 ]
 
 [[package]]

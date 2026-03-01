@@ -72,6 +72,7 @@ $WxsPath = "$WixDir\main.wxs"
 $IconPath = "$RepoRoot\assets\icons\app-icon.ico"
 
 wix build $WxsPath `
+    -arch x64 `
     -d "BinaryPath=$BinaryPath" `
     -d "ToolPath=$ToolPath" `
     -d "McpPath=$McpPath" `

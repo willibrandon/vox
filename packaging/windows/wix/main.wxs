@@ -4,8 +4,7 @@
 
   Installs vox.exe, vox-tool.exe, and vox-mcp.exe to Program Files\Vox\
   with a Start Menu shortcut and Add/Remove Programs entry. Does NOT
-  bundle models — they are auto-downloaded on first launch (Constitution
-  Principle V).
+  bundle models — they are auto-downloaded on first launch.
 
   Build: see ../build-msi.ps1
 -->
@@ -38,6 +37,16 @@
         <Component Id="VoxMcpExecutable" Guid="E5C1A7B4-9F6D-7A2E-DB5C-7D0E1F2A4C5D">
           <File Id="VoxMcpExe" Source="$(var.McpPath)" KeyPath="yes" />
         </Component>
+        <Component Id="PathEntry" Guid="F6D2B8C5-0A7E-8B3F-EC6D-8E1F2A3B5D6E">
+          <Environment
+            Id="VoxPath"
+            Name="PATH"
+            Value="[INSTALLFOLDER]"
+            Permanent="no"
+            Part="last"
+            Action="set"
+            System="yes" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
@@ -68,6 +77,7 @@
       <ComponentRef Id="VoxExecutable" />
       <ComponentRef Id="VoxToolExecutable" />
       <ComponentRef Id="VoxMcpExecutable" />
+      <ComponentRef Id="PathEntry" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
   </Package>
