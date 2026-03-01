@@ -111,18 +111,36 @@ pub fn capture_window(handle: isize) -> Result<Vec<u8>> {
 /// `handle` is the `CGWindowID` cast to `isize`.
 #[cfg(target_os = "macos")]
 pub fn capture_window(handle: isize) -> Result<Vec<u8>> {
+    use objc2_core_foundation::CGRect;
     use objc2_core_graphics::{
-        CGImage, CGRect, CGWindowImageOption, CGWindowListCreateImage, CGWindowListOption,
+        CGImage, CGWindowImageOption, CGWindowListOption,
     };
+    use std::ptr::NonNull;
+
+    // Direct extern declaration to avoid the objc2 crate's deprecation annotation.
+    // Apple has NOT deprecated CGWindowListCreateImage — the Rust bindings suggest
+    // ScreenCaptureKit, but that API is async and heavyweight for single-window capture.
+    unsafe extern "C-unwind" {
+        fn CGWindowListCreateImage(
+            screen_bounds: CGRect,
+            list_option: CGWindowListOption,
+            window_id: u32,
+            image_option: CGWindowImageOption,
+        ) -> Option<NonNull<CGImage>>;
+    }
 
     let window_id = handle as u32;
 
-    let bounds = CGRect::ZERO; // CGRectNull — captures the window's own bounds
+    let bounds = CGRect::ZERO;
     let list_option = CGWindowListOption::OptionIncludingWindow;
     let image_option = CGWindowImageOption::BoundsIgnoreFraming;
 
-    let image = CGWindowListCreateImage(bounds, list_option, window_id, image_option)
-        .ok_or_else(|| anyhow::anyhow!("CGWindowListCreateImage returned null"))?;
+    let image_ptr = unsafe {
+        CGWindowListCreateImage(bounds, list_option, window_id, image_option)
+    }
+    .ok_or_else(|| anyhow::anyhow!("CGWindowListCreateImage returned null"))?;
+
+    let image = unsafe { objc2_core_foundation::CFRetained::from_raw(image_ptr) };
 
     let width = CGImage::width(Some(&image));
     let height = CGImage::height(Some(&image));
