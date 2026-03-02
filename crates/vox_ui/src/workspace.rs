@@ -288,6 +288,12 @@ impl RenderOnce for StatusBar {
 /// Uses a singleton pattern: only one settings window exists at a time.
 /// Window position and size are restored from persisted settings.
 pub fn open_settings_window(cx: &mut App) {
+    // Re-activate the application so the window appears in the foreground.
+    // On macOS, LSUIElement apps (no Dock icon) lose activation when the user
+    // switches to another app. Without re-activation, makeKeyAndOrderFront_
+    // creates a window behind all other windows that can block the run loop.
+    cx.activate(true);
+
     let store = window_handle_store();
     let mut handle_guard = store.lock();
 

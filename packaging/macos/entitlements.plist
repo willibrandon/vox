@@ -5,6 +5,12 @@
 
   audio-input: Required for microphone capture via cpal.
   apple-events: Required for text injection via CGEvent posting.
+  disable-library-validation: Required because ad-hoc signed binaries have
+    no team ID, so library validation rejects dlopen of the bundled ONNX
+    Runtime dylib even though both are signed with the same identity.
+    init_ort_runtime() checks the bundled copy (Contents/MacOS/) before the
+    dev vendor path, so the sealed bundle dylib is always loaded in production.
+    A Developer ID signature would make this entitlement unnecessary.
 -->
 <plist version="1.0">
 <dict>
@@ -12,6 +18,9 @@
     <true/>
 
     <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 </dict>
 </plist>

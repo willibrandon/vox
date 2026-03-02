@@ -27,37 +27,52 @@ fn init_ort_runtime() -> Result<()> {
     #[cfg(target_os = "linux")]
     const ORT_LIB_NAME: &str = "libonnxruntime.so";
 
-    // Development: vendor directory relative to workspace root
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let vendor_path = manifest_dir
-        .join("../../vendor/onnxruntime")
-        .join(ORT_LIB_NAME);
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-    if vendor_path.exists() {
-        ort::init_from(&vendor_path)
-            .map(|_| ())
-            .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", vendor_path.display()))?;
-        return Ok(());
+    // Production: next to the executable (e.g. Contents/MacOS/ in a .app bundle).
+    // Checked first so the signed bundled dylib is always preferred over the dev
+    // vendor copy — this keeps library validation intact under hardened runtime
+    // (both the dylib and the main executable share the same signing identity).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join(ORT_LIB_NAME));
+        }
     }
 
-    // Production: next to the executable
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(exe_dir) = exe.parent()
-    {
-        let exe_path = exe_dir.join(ORT_LIB_NAME);
-        if exe_path.exists() {
-            ort::init_from(&exe_path)
-                .map(|_| ())
-                .map_err(|e| anyhow::anyhow!("ort init from {}: {e}", exe_path.display()))?;
-            return Ok(());
+    // Development: vendor directory relative to workspace root (CARGO_MANIFEST_DIR
+    // is baked at compile time, so this path only exists on the build machine).
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    candidates.push(
+        manifest_dir
+            .join("../../vendor/onnxruntime")
+            .join(ORT_LIB_NAME),
+    );
+
+    // Try each candidate in order — a load failure (e.g. hardened runtime library
+    // validation rejecting an unsigned dylib) must not abort; fall through to the
+    // next candidate instead.
+    for candidate in &candidates {
+        if candidate.exists() {
+            match ort::init_from(candidate) {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %candidate.display(),
+                        %err,
+                        "ONNX Runtime found but failed to load, trying next candidate"
+                    );
+                }
+            }
         }
     }
 
     bail!(
-        "ONNX Runtime library '{ORT_LIB_NAME}' not found. Checked:\n  \
-         - {}\n  \
-         - next to executable",
-        vendor_path.display()
+        "ONNX Runtime library '{ORT_LIB_NAME}' not found or could not be loaded. Checked:\n{}",
+        candidates
+            .iter()
+            .map(|p| format!("  - {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 

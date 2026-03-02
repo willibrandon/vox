@@ -67,6 +67,16 @@ cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/vox"
 cp "$TOOL_BINARY" "$APP_BUNDLE/Contents/MacOS/vox-tool"
 cp "$MCP_BINARY" "$APP_BUNDLE/Contents/MacOS/vox-mcp"
 
+# Copy ONNX Runtime dylib (required by Silero VAD via ort load-dynamic)
+ORT_DYLIB="$REPO_ROOT/vendor/onnxruntime/libonnxruntime.dylib"
+if [ -f "$ORT_DYLIB" ]; then
+    cp "$ORT_DYLIB" "$APP_BUNDLE/Contents/MacOS/libonnxruntime.dylib"
+    echo "  ONNX Runtime: bundled"
+else
+    echo "ERROR: ONNX Runtime dylib not found at $ORT_DYLIB"
+    exit 1
+fi
+
 # Copy Info.plist
 cp "$SCRIPT_DIR/Info.plist" "$APP_BUNDLE/Contents/"
 
@@ -98,17 +108,32 @@ echo ""
 echo "[4/4] Code signing..."
 
 IDENTITY="${CODESIGN_IDENTITY:--}"
+
+# Sign the ONNX Runtime dylib individually before the bundle seal.
+# Hardened runtime library validation requires loaded dylibs to be signed.
+codesign --force --sign "$IDENTITY" \
+    --options runtime \
+    "$APP_BUNDLE/Contents/MacOS/libonnxruntime.dylib"
+
 codesign --force --sign "$IDENTITY" \
     --entitlements "$SCRIPT_DIR/entitlements.plist" \
     --options runtime \
     "$APP_BUNDLE"
 
+# Force macOS to invalidate its icon cache for this bundle.
+# Without this, Finder/Dock show a stale cached icon after rebuild.
+touch "$APP_BUNDLE"
+
+ORT_SIZE=$(stat -f%z "$APP_BUNDLE/Contents/MacOS/libonnxruntime.dylib" 2>/dev/null || stat -c%s "$APP_BUNDLE/Contents/MacOS/libonnxruntime.dylib")
+ORT_SIZE_MB=$(echo "scale=2; $ORT_SIZE / 1048576" | bc)
+
 echo ""
 echo "=== Build Complete ==="
-echo "  vox:      ${BINARY_SIZE_MB} MB"
-echo "  vox-tool: ${TOOL_SIZE_MB} MB"
-echo "  vox-mcp:  ${MCP_SIZE_MB} MB"
-echo "  Bundle:   $APP_BUNDLE"
+echo "  vox:            ${BINARY_SIZE_MB} MB"
+echo "  vox-tool:       ${TOOL_SIZE_MB} MB"
+echo "  vox-mcp:        ${MCP_SIZE_MB} MB"
+echo "  onnxruntime:    ${ORT_SIZE_MB} MB"
+echo "  Bundle:         $APP_BUNDLE"
 echo ""
 echo "To test: open $APP_BUNDLE"
 echo "To create DMG: ./packaging/macos/build-dmg.sh"
